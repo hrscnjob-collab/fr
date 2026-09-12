@@ -571,7 +571,7 @@ export function JobDetailsView({ jobId, backUrl = '/jobs', hrefPrefix = '/jobs' 
               </div>
             </div>
             <DialogDescription className="text-slate-600 text-xs font-medium pt-2 leading-relaxed">
-              Hi! You can now call the HR / Recruiter directly to introduce yourself, discuss this role, and fast-track your application.
+              Hi! You can now call the HR or contact on whatsapp  directly to introduce yourself, discuss this role, and fast-track your application.
             </DialogDescription>
           </DialogHeader>
 
