@@ -1,4 +1,4 @@
-import { LayoutDashboard, Search, FileText, User, Briefcase } from 'lucide-react';
+import { LayoutDashboard, Search, FileText, User, Briefcase, Bell } from 'lucide-react';
 import { NavItem } from '@/components/dashboard-sidebar';
 
 export const workerNavItems: NavItem[] = [
@@ -22,5 +22,5 @@ export const adminNavItems: NavItem[] = [
   { label: 'Applications', href: '/admin/applications', icon: FileText },
   { label: 'Jobs', href: '/admin/jobs', icon: Briefcase },
   { label: 'Master Data', href: '/admin/master-data', icon: FileText },
+  { label: 'Notifications', href: '/admin/notifications', icon: Bell },
 ];
-

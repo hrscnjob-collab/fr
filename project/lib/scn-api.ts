@@ -1460,3 +1460,24 @@ export const contactApi = {
     return apiPost<{ success: boolean; data?: any; message?: string }>('/contact', data);
   },
 };
+// ───────────────────────── Notifications ─────────────────────────
+
+export type NotificationAudience = 'ALL' | 'WORKER' | 'RECRUITER';
+
+export interface BackendNotification {
+  id: string;
+  title: string;
+  message: string;
+  audience: NotificationAudience;
+  createdById: string;
+  createdAt: string;
+}
+
+export const notificationApi = {
+  create(data: { title: string; message: string; audience: NotificationAudience }) {
+    return apiPost<BackendNotification>('/notifications', data);
+  },
+  list() {
+    return apiGet<BackendNotification[]>('/notifications');
+  },
+};

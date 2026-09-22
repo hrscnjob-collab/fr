@@ -17,6 +17,7 @@ import {
 import { NavItem } from '@/components/dashboard-sidebar';
 import { useAuth } from '@/lib/auth-context';
 import { getInitials } from '@/lib/format';
+import { NotificationBell } from '@/components/notification-bell';
 
 interface DashboardTopbarProps {
   items: NavItem[];
@@ -28,7 +29,6 @@ interface DashboardTopbarProps {
 
 export function DashboardTopbar({ role, title, sidebarOpen, onToggleSidebar }: DashboardTopbarProps) {
   const { user, logout } = useAuth();
-  const unreadCount = 0;
 
   const profileRoute = role === 'worker' ? '/worker/profile' : role === 'recruiter' ? '/recruiter/dashboard' : null;
   const isWorker = role === 'worker';
@@ -65,6 +65,7 @@ export function DashboardTopbar({ role, title, sidebarOpen, onToggleSidebar }: D
 
           <div className="flex items-center gap-2.5">
 
+            <NotificationBell className="relative rounded-full text-slate-500 hover:bg-slate-50" />
             <ThemeToggle />
 
             <DropdownMenu>
@@ -122,6 +123,7 @@ export function DashboardTopbar({ role, title, sidebarOpen, onToggleSidebar }: D
         </div>
 
         <div className="flex items-center gap-4">
+          <NotificationBell className="relative rounded-full text-slate-500 hover:bg-slate-50" />
           <ThemeToggle />
 
           {/* User Profile Card */}
@@ -173,6 +175,7 @@ export function DashboardTopbar({ role, title, sidebarOpen, onToggleSidebar }: D
         </div>
 
         <div className="flex items-center gap-2">
+          <NotificationBell />
           <ThemeToggle />
 
           <DropdownMenu>
