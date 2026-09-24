@@ -1469,15 +1469,34 @@ export interface BackendNotification {
   title: string;
   message: string;
   audience: NotificationAudience;
-  createdById: string;
+  createdById?: string;
+  // Optional — set by the admin when the notification is about an event
+  // happening at a specific place/time. Absent for plain announcements.
+  location?: string | null;
+  eventDateTime?: string | null;
   createdAt: string;
 }
 
 export const notificationApi = {
-  create(data: { title: string; message: string; audience: NotificationAudience }) {
+  create(data: {
+    title: string;
+    message: string;
+    audience: NotificationAudience;
+    location?: string;
+    eventDateTime?: string;
+  }) {
     return apiPost<BackendNotification>('/notifications', data);
   },
   list() {
     return apiGet<BackendNotification[]>('/notifications');
+  },
+  // Top-N feed shown right after a candidate/recruiter logs in.
+  latest(limit = 5) {
+    return apiGet<BackendNotification[]>(`/notifications/latest?limit=${limit}`);
+  },
+  // Same idea, but unauthenticated — powers the landing page's rotating
+  // events & announcements box, which loads before anyone has logged in.
+  publicLatest(limit = 5) {
+    return apiGet<BackendNotification[]>(`/notifications/public/latest?limit=${limit}`);
   },
 };

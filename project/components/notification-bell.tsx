@@ -1,6 +1,6 @@
 'use client';
 
-import { Bell } from 'lucide-react';
+import { Bell, MapPin, CalendarClock, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -23,8 +23,17 @@ function timeAgo(iso: string) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+function formatEventDateTime(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function NotificationBell({ className }: { className?: string }) {
-  const { notifications, unreadCount, markAllRead } = useNotifications();
+  const { notifications, unreadCount, markAllRead, clearNotifications } = useNotifications();
 
   return (
     <DropdownMenu onOpenChange={(open) => open && markAllRead()}>
@@ -47,7 +56,22 @@ export function NotificationBell({ className }: { className?: string }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <div className="flex items-center justify-between pr-1">
+          <DropdownMenuLabel className="p-0">Notifications</DropdownMenuLabel>
+          {notifications.length > 0 && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                clearNotifications();
+              }}
+              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-muted"
+            >
+              <X className="h-3 w-3" />
+              Clear
+            </button>
+          )}
+        </div>
         <DropdownMenuSeparator />
         {notifications.length === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-muted-foreground">
@@ -63,6 +87,22 @@ export function NotificationBell({ className }: { className?: string }) {
                 >
                   <p className="text-sm font-semibold leading-tight">{n.title}</p>
                   <p className="mt-1 text-xs text-muted-foreground leading-snug">{n.message}</p>
+                  {(n.location || n.eventDateTime) && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {n.eventDateTime && (
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-primary">
+                          <CalendarClock className="h-3 w-3" />
+                          {formatEventDateTime(n.eventDateTime)}
+                        </span>
+                      )}
+                      {n.location && (
+                        <span className="flex items-center gap-1 text-[11px] font-medium text-primary">
+                          <MapPin className="h-3 w-3" />
+                          {n.location}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <p className="mt-1.5 text-[11px] text-muted-foreground/70">{timeAgo(n.createdAt)}</p>
                 </div>
               ))}

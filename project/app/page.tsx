@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { AppLogo } from '@/components/app-logo';
+import { useTheme } from '@/components/theme-provider';
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens                                                      */
@@ -360,7 +361,8 @@ function formatJobCompany(j: any): string {
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
 export default function SCNJobsLanding() {
-  const [dark, setDark] = useState(false);
+  const { theme, setTheme } = useTheme();
+  const dark = theme === 'dark';
   const [menuOpen, setMenuOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
   const [statsRef, statsVisible] = useReveal();
@@ -566,7 +568,7 @@ export default function SCNJobsLanding() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               aria-label="Toggle theme"
-              onClick={() => setDark((d) => !d)}
+              onClick={() => setTheme(dark ? 'light' : 'dark')}
               className="ghost-btn"
               style={{
                 width: 38, height: 38, borderRadius: 10,

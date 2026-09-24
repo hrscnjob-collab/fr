@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Send, Loader2, Bell } from 'lucide-react';
+import { Send, Loader2, Bell, MapPin, CalendarClock } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +38,9 @@ export default function AdminNotificationsPage() {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [audience, setAudience] = useState<NotificationAudience>('ALL');
+  // Optional — only sent when the admin fills them in.
+  const [location, setLocation] = useState('');
+  const [eventDateTime, setEventDateTime] = useState('');
 
   const { data: notifications, isLoading } = useQuery<BackendNotification[]>({
     queryKey: ['admin-notifications'],
@@ -51,6 +54,8 @@ export default function AdminNotificationsPage() {
       setTitle('');
       setMessage('');
       setAudience('ALL');
+      setLocation('');
+      setEventDateTime('');
       queryClient.invalidateQueries({ queryKey: ['admin-notifications'] });
     },
     onError: (err) => {
@@ -64,7 +69,16 @@ export default function AdminNotificationsPage() {
       toast.error('Title and message are required');
       return;
     }
-    createMutation.mutate({ title: title.trim(), message: message.trim(), audience });
+    createMutation.mutate({
+      title: title.trim(),
+      message: message.trim(),
+      audience,
+      location: location.trim() || undefined,
+      // <input type="datetime-local"> gives "2026-09-24T18:30" with no
+      // timezone — new Date(...) parses that as local time, and
+      // .toISOString() converts it to UTC for the backend.
+      eventDateTime: eventDateTime ? new Date(eventDateTime).toISOString() : undefined,
+    });
   };
 
   return (
@@ -114,6 +128,34 @@ export default function AdminNotificationsPage() {
               </Select>
             </div>
 
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="notif-location" className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5" /> Location
+                  <span className="font-normal text-muted-foreground">(optional)</span>
+                </Label>
+                <Input
+                  id="notif-location"
+                  value={location}
+                  onChange={(e) => setLocation(e.target.value)}
+                  placeholder="e.g. Noida Office"
+                  maxLength={200}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="notif-datetime" className="flex items-center gap-1.5">
+                  <CalendarClock className="h-3.5 w-3.5" /> Date &amp; time
+                  <span className="font-normal text-muted-foreground">(optional)</span>
+                </Label>
+                <Input
+                  id="notif-datetime"
+                  type="datetime-local"
+                  value={eventDateTime}
+                  onChange={(e) => setEventDateTime(e.target.value)}
+                />
+              </div>
+            </div>
+
             <Button type="submit" className="w-full" disabled={createMutation.isPending}>
               {createMutation.isPending ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -148,6 +190,22 @@ export default function AdminNotificationsPage() {
                     </Badge>
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{n.message}</p>
+                  {(n.location || n.eventDateTime) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                      {n.eventDateTime && (
+                        <span className="flex items-center gap-1 text-xs font-medium text-primary">
+                          <CalendarClock className="h-3.5 w-3.5" />
+                          {new Date(n.eventDateTime).toLocaleString()}
+                        </span>
+                      )}
+                      {n.location && (
+                        <span className="flex items-center gap-1 text-xs font-medium text-primary">
+                          <MapPin className="h-3.5 w-3.5" />
+                          {n.location}
+                        </span>
+                      )}
+                    </div>
+                  )}
                   <p className="mt-2 text-xs text-muted-foreground/70">
                     {new Date(n.createdAt).toLocaleString()}
                   </p>

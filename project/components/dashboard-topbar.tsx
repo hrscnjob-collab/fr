@@ -18,6 +18,7 @@ import { NavItem } from '@/components/dashboard-sidebar';
 import { useAuth } from '@/lib/auth-context';
 import { getInitials } from '@/lib/format';
 import { NotificationBell } from '@/components/notification-bell';
+import { NotificationLoginPopup } from '@/components/notification-login-popup';
 
 interface DashboardTopbarProps {
   items: NavItem[];
@@ -36,6 +37,7 @@ export function DashboardTopbar({ role, title, sidebarOpen, onToggleSidebar }: D
   if (isWorker) {
     return (
       <header className="sticky top-0 z-40 flex h-20 items-center justify-between gap-4 border-b border-slate-100 bg-white/95 px-6 backdrop-blur-xl sm:px-8">
+        <NotificationLoginPopup role="worker" />
         <div className="flex items-center gap-4 flex-1">
           <Button
             variant="ghost"
@@ -110,6 +112,7 @@ export function DashboardTopbar({ role, title, sidebarOpen, onToggleSidebar }: D
   if (role === 'recruiter') {
     return (
       <header className="sticky top-0 z-40 flex h-20 items-center justify-between gap-4 border-b border-slate-100 bg-white/95 px-6 backdrop-blur-xl sm:px-8">
+        <NotificationLoginPopup role="recruiter" />
         <div className="flex items-center gap-4 flex-1">
           <Button
             variant="ghost"
