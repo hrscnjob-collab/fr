@@ -191,16 +191,16 @@ export default function AdminNotificationsPage() {
                   </div>
                   <p className="mt-1 text-sm text-muted-foreground">{n.message}</p>
                   {(n.location || n.eventDateTime) && (
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <div className="mt-2 flex flex-col gap-1">
                       {n.eventDateTime && (
                         <span className="flex items-center gap-1 text-xs font-medium text-primary">
-                          <CalendarClock className="h-3.5 w-3.5" />
+                          <CalendarClock className="h-3.5 w-3.5 shrink-0" />
                           {new Date(n.eventDateTime).toLocaleString()}
                         </span>
                       )}
                       {n.location && (
                         <span className="flex items-center gap-1 text-xs font-medium text-primary">
-                          <MapPin className="h-3.5 w-3.5" />
+                          <MapPin className="h-3.5 w-3.5 shrink-0" />
                           {n.location}
                         </span>
                       )}
