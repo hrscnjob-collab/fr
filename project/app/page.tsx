@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 
 import { AppLogo } from '@/components/app-logo';
-import { useTheme } from '@/components/theme-provider';
+import { LandingEventsBanner } from '@/components/landing-events-banner';
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens                                                      */
@@ -361,8 +361,7 @@ function formatJobCompany(j: any): string {
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
 export default function SCNJobsLanding() {
-  const { theme, setTheme } = useTheme();
-  const dark = theme === 'dark';
+  const [dark, setDark] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [openFaq, setOpenFaq] = useState(0);
   const [statsRef, statsVisible] = useReveal();
@@ -568,7 +567,7 @@ export default function SCNJobsLanding() {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
               aria-label="Toggle theme"
-              onClick={() => setTheme(dark ? 'light' : 'dark')}
+              onClick={() => setDark((d) => !d)}
               className="ghost-btn"
               style={{
                 width: 38, height: 38, borderRadius: 10,
@@ -729,6 +728,9 @@ export default function SCNJobsLanding() {
           }
         `}</style>
       </section>
+
+      {/* ---------------- EVENTS & ANNOUNCEMENTS ---------------- */}
+      <LandingEventsBanner dark={dark} />
 
       {/* ---------------- MARQUEE ---------------- */}
       <section style={{ padding: "26px 0", borderTop: `1px solid ${pal.border}`, borderBottom: `1px solid ${pal.border}`, background: pal.surfaceAlt, overflow: "hidden" }}>
