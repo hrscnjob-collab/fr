@@ -162,11 +162,11 @@ export default function WorkerRegisterPage() {
           />
           <Label htmlFor="agree" className="text-sm font-normal text-muted-foreground">
             I agree to the{' '}
-            <a href="#" className="font-medium text-primary hover:underline">
+            <a href="/terms" target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
               Terms of Service
             </a>{' '}
             and{' '}
-            <a href="#" className="font-medium text-primary hover:underline">
+            <a href="/privacy" target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">
               Privacy Policy
             </a>
           </Label>
