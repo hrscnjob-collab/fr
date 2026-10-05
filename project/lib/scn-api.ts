@@ -1107,6 +1107,9 @@ export const workerApi = {
   async deleteExperience(id: string) {
     return await apiDelete<any>(`/worker/experience/${id}`);
   },
+  async deleteAccount() {
+    return await apiDelete<any>('/worker/account');
+  },
   async addEducation(data: {
     qualificationId?: number;
     qualificationName?: string;

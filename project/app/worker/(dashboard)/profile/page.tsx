@@ -51,6 +51,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { UploadButton } from '@/utils/uploadthing';
+import { DeleteAccountCard } from '@/components/delete-account-card';
 
 const QUAL_CATEGORY_LABELS: Record<string, string> = {
   TEN: '10th Pass',
@@ -1496,6 +1497,9 @@ export default function WorkerProfilePage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+
+          {/* Danger zone */}
+          <DeleteAccountCard />
         </>
       )}
     </div>

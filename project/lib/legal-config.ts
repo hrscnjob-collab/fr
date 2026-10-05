@@ -20,9 +20,9 @@ export const LEGAL = {
 
   // ⚠ REQUIRED: make sure these mailboxes actually exist and are monitored.
   emails: {
-    support: 'support@scnjobs.com',
-    privacy: 'privacy@scnjobs.com',
-    legal: 'legal@scnjobs.com',
+    support: 'hrscnjob@gmail.com',
+    privacy: 'hrscnjob@gmail.com',
+    legal: 'hrscnjob@gmail.com',
   },
 
   /**
