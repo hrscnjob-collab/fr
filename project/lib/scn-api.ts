@@ -1478,6 +1478,8 @@ export interface BackendNotification {
   location?: string | null;
   eventDateTime?: string | null;
   createdAt: string;
+  // Bumped every time an admin edits the notification.
+  updatedAt?: string;
 }
 
 export const notificationApi = {
@@ -1489,6 +1491,24 @@ export const notificationApi = {
     eventDateTime?: string;
   }) {
     return apiPost<BackendNotification>('/notifications', data);
+  },
+  // Admin: edit any field. Send only what changed; location /
+  // eventDateTime accept null to clear.
+  update(
+    id: string,
+    data: {
+      title?: string;
+      message?: string;
+      audience?: NotificationAudience;
+      location?: string | null;
+      eventDateTime?: string | null;
+    },
+  ) {
+    return apiPatch<BackendNotification>(`/notifications/${id}`, data);
+  },
+  // Admin: delete (disappears from every open client live).
+  remove(id: string) {
+    return apiDelete<{ deleted: boolean; id: string }>(`/notifications/${id}`);
   },
   list() {
     return apiGet<BackendNotification[]>('/notifications');

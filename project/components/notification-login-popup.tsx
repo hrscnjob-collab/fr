@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { notificationApi, BackendNotification } from '@/lib/scn-api';
+import { isEdited } from '@/lib/notification-utils';
 
 function timeAgo(iso: string) {
   const diffMs = Date.now() - new Date(iso).getTime();
@@ -84,10 +85,10 @@ export function NotificationLoginPopup({ role }: NotificationLoginPopupProps) {
                 <div className="flex items-start justify-between gap-3">
                   <p className="text-sm font-semibold leading-tight">{n.title}</p>
                   <Badge variant="secondary" className="shrink-0 text-[10px]">
-                    {timeAgo(n.createdAt)}
+                    {isEdited(n) ? `Updated ${timeAgo(n.updatedAt!)}` : timeAgo(n.createdAt)}
                   </Badge>
                 </div>
-                <p className="mt-1 text-sm text-muted-foreground">{n.message}</p>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm text-muted-foreground">{n.message}</p>
                 {(n.location || n.eventDateTime) && (
                   <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                     {n.eventDateTime && (

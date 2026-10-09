@@ -12,6 +12,9 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { notificationApi, BackendNotification } from '@/lib/scn-api';
+import { isEdited, upsertNotification } from '@/lib/notification-utils';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || '/api';
 
 const BRAND = {
   ink: '#101235',
@@ -117,6 +120,53 @@ export function LandingEventsBanner({ dark }: { dark: boolean }) {
     }, ROTATE_MS);
     return () => clearInterval(timer);
   }, [items.length, paused]);
+
+  // Live updates: after the first load, keep a public (no-login) SSE
+  // connection so anything the admin posts / edits / deletes shows up
+  // here immediately.
+  useEffect(() => {
+    if (!loaded) return;
+
+    const refetch = () =>
+      notificationApi
+        .publicLatest(5)
+        .then((data) => setItems(Array.isArray(data) ? data : []))
+        .catch(() => {});
+
+    const es = new EventSource(`${API_BASE}/notifications/public/stream`);
+    let openedOnce = false;
+    es.onopen = () => {
+      if (openedOnce) refetch(); // resync after a dropped connection
+      openedOnce = true;
+    };
+
+    const upsert = (event: Event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data) as BackendNotification;
+        setItems((prev) => upsertNotification(prev, data).slice(0, 5));
+      } catch {
+        // ignore malformed frame
+      }
+    };
+    es.addEventListener('notification', upsert);
+    es.addEventListener('notification-updated', upsert);
+    es.addEventListener('notification-deleted', (event) => {
+      try {
+        const { id } = JSON.parse((event as MessageEvent).data) as { id: string };
+        setItems((prev) => prev.filter((n) => n.id !== id));
+      } catch {
+        // ignore
+      }
+      refetch(); // an older item may now belong in the top 5
+    });
+
+    return () => es.close();
+  }, [loaded]);
+
+  // Keep the active slide valid when items change live.
+  useEffect(() => {
+    if (items.length > 0 && index >= items.length) setIndex(0);
+  }, [items.length, index]);
 
   // Nothing to announce right now — don't show an empty section at all.
   if (loaded && items.length === 0) {
@@ -246,6 +296,22 @@ export function LandingEventsBanner({ dark }: { dark: boolean }) {
                     >
                       <Icon size={11} /> Event
                     </span>
+                    {isEdited(n) && (
+                      <span
+                        style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          letterSpacing: '0.06em',
+                          textTransform: 'uppercase',
+                          color: BRAND.teal,
+                          border: `1px solid ${BRAND.teal}55`,
+                          borderRadius: 999,
+                          padding: '2px 8px',
+                        }}
+                      >
+                        Updated
+                      </span>
+                    )}
                     <span style={{ fontWeight: 700, fontSize: 15.5, color: pal.title }}>{n.title}</span>
                   </div>
                   <p style={{ marginTop: 5, fontSize: 13.5, color: pal.body, lineHeight: 1.5 }}>{n.message}</p>
