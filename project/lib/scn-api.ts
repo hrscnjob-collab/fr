@@ -136,8 +136,10 @@ interface BackendJob {
   benefits?: string[];
   industryId: number;
   industry?: BackendLookup;
+  industries?: { industryId?: number; industry?: BackendLookup }[];
   functionId?: number | null;
   function?: BackendLookup | null;
+  functions?: { functionId?: number; function?: BackendLookup }[];
   jobRoleId?: number | null;
   jobRole?: BackendLookup | null;
   locationId: number;
@@ -404,7 +406,24 @@ export function toJob(job: BackendJob): JobWithMeta {
       return name;
     })
     .filter((q): q is string => Boolean(q));
-  const experienceMin = Math.floor((job.minExperienceMonths || 0) / 12);
+  const minExperienceMonths = job.minExperienceMonths || 0;
+  const maxExperienceMonths =
+    job.maxExperienceMonths !== undefined && job.maxExperienceMonths !== null ? job.maxExperienceMonths : null;
+  const experienceMin = Math.floor(minExperienceMonths / 12);
+  const industryLinks = (job.industries || []).filter((entry) => entry.industry?.name);
+  const industryNames = industryLinks.length > 0
+    ? industryLinks.map((entry) => entry.industry!.name as string)
+    : job.industry?.name ? [job.industry.name] : [];
+  const industryIds = industryLinks.length > 0
+    ? industryLinks.map((entry) => Number(entry.industryId ?? entry.industry?.id))
+    : job.industryId ? [job.industryId] : [];
+  const functionLinks = (job.functions || []).filter((entry) => entry.function?.name);
+  const functionNames = functionLinks.length > 0
+    ? functionLinks.map((entry) => entry.function!.name as string)
+    : job.function?.name ? [job.function.name] : [];
+  const functionIds = functionLinks.length > 0
+    ? functionLinks.map((entry) => Number(entry.functionId ?? entry.function?.id))
+    : job.functionId ? [job.functionId] : [];
   const locationName = formatLocationString(job.location?.locality, job.location?.city, job.location?.state) || 'Location not specified';
   const title = job.title || job.jobRole?.name || (job as any).jobRoleName || 'Job Listing';
 
@@ -467,9 +486,13 @@ export function toJob(job: BackendJob): JobWithMeta {
     companyId: recruiter?.id || job.postedBy,
     companyName,
     companyLogo: '',
-    industry: job.industry?.name || 'General',
-    department: (job as any).function?.name || (job as any).functionName || (job as any).departmentName || (job as any).department || 'General',
-    departmentName: (job as any).function?.name || (job as any).functionName || (job as any).departmentName || (job as any).department || 'General',
+    industry: industryNames.length > 0 ? industryNames.join(', ') : 'General',
+    industries: industryNames,
+    industryIds,
+    functions: functionNames,
+    functionIds,
+    department: functionNames.length > 0 ? functionNames.join(', ') : ((job as any).functionName || (job as any).departmentName || (job as any).department || 'General'),
+    departmentName: functionNames.length > 0 ? functionNames.join(', ') : ((job as any).functionName || (job as any).departmentName || (job as any).department || 'General'),
     location: locationName,
     locality: job.location?.locality,
     workType: 'onsite',
@@ -479,7 +502,9 @@ export function toJob(job: BackendJob): JobWithMeta {
     salaryMax,
     wagePeriod,
     experienceMin,
-    experienceMax: job.maxExperienceMonths !== undefined && job.maxExperienceMonths !== null ? Math.floor(job.maxExperienceMonths / 12) : Math.max(experienceMin, experienceMin + 3),
+    experienceMax: maxExperienceMonths !== null ? Math.ceil(maxExperienceMonths / 12) : Math.max(experienceMin, experienceMin + 3),
+    minExperienceMonths,
+    maxExperienceMonths,
     workingDays: job.workingDays || undefined,
     freshersOnly: job.freshersOnly || undefined,
     genderPreference: job.gender || undefined,
@@ -889,9 +914,11 @@ function formatJobPayload(data: any) {
     industryId: cleanIndIds && cleanIndIds.length > 0 ? cleanIndIds[0] : (data.industryId ? Number(data.industryId) : undefined),
     industryIds: cleanIndIds && cleanIndIds.length > 0 ? cleanIndIds : undefined,
     industryName: data.industryName || undefined,
+    industryNames: Array.isArray(data.industryNames) && data.industryNames.length > 0 ? data.industryNames : undefined,
     functionId: cleanFuncIds && cleanFuncIds.length > 0 ? cleanFuncIds[0] : (data.functionId ? Number(data.functionId) : undefined),
     functionIds: cleanFuncIds && cleanFuncIds.length > 0 ? cleanFuncIds : undefined,
     functionName: data.functionName || undefined,
+    functionNames: Array.isArray(data.functionNames) && data.functionNames.length > 0 ? data.functionNames : undefined,
     locationId: Number(data.locationId),
     jobRoleId: data.jobRoleId ? Number(data.jobRoleId) : undefined,
     jobType: formattedJobType,
@@ -899,7 +926,12 @@ function formatJobPayload(data: any) {
     gender: (data.gender || 'ANY').toUpperCase(),
     headcountRequired: Number(data.headcountRequired || 1),
     minExperienceMonths: data.freshersOnly ? undefined : (data.minExperienceMonths !== undefined ? Number(data.minExperienceMonths) : undefined),
-    maxExperienceMonths: data.freshersOnly ? undefined : (data.maxExperienceMonths !== undefined ? Number(data.maxExperienceMonths) : undefined),
+    // null explicitly clears the maximum when editing a job
+    maxExperienceMonths: data.freshersOnly
+      ? undefined
+      : data.maxExperienceMonths === null
+        ? null
+        : data.maxExperienceMonths !== undefined ? Number(data.maxExperienceMonths) : undefined,
     freshersOnly: Boolean(data.freshersOnly),
     workingDays: workingDaysEnum,
     workingStatus: data.workingStatus || undefined,
@@ -923,6 +955,7 @@ function formatJobPayload(data: any) {
           .map((id: any) => Number(id))
           .filter((id: number) => !isNaN(id) && id > 0)
       : undefined,
+    skillNames: Array.isArray(data.skillNames) && data.skillNames.length > 0 ? data.skillNames : undefined,
     skills: data.skills,
     qualifications: data.qualifications,
     benefitNames: data.benefitNames,

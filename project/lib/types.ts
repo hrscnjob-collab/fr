@@ -45,6 +45,12 @@ export interface Job {
   wagePeriod?: 'monthly' | 'annual' | 'daily';
   experienceMin: number;
   experienceMax: number;
+  minExperienceMonths?: number;
+  maxExperienceMonths?: number | null;
+  industries?: string[];
+  industryIds?: number[];
+  functions?: string[];
+  functionIds?: number[];
   workingDays?: number;
   freshersOnly?: boolean;
   genderPreference?: 'MALE' | 'FEMALE' | 'ANY';

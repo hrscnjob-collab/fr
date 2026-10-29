@@ -104,3 +104,28 @@ export function formatExpectedSalary(min?: number | null, max?: number | null, p
   if (minVal === maxVal) return `₹${minVal.toLocaleString('en-IN')} ${suffix}`;
   return `₹${minVal.toLocaleString('en-IN')} - ₹${maxVal.toLocaleString('en-IN')} ${suffix}`;
 }
+
+/** 30 -> "2 yrs 6 mo", 12 -> "1 yr", 5 -> "5 mo", 0 -> "0 yrs" */
+export function formatExperienceMonths(totalMonths?: number | null): string {
+  const total = Math.max(0, Math.round(Number(totalMonths) || 0));
+  const years = Math.floor(total / 12);
+  const months = total % 12;
+  const parts: string[] = [];
+  if (years > 0) parts.push(`${years} ${years === 1 ? 'yr' : 'yrs'}`);
+  if (months > 0) parts.push(`${months} mo`);
+  return parts.length > 0 ? parts.join(' ') : '0 yrs';
+}
+
+/** Range label from months: "1 yr 6 mo - 3 yrs", "2 yrs+", or "Fresher". */
+export function formatExperienceRange(
+  minMonths?: number | null,
+  maxMonths?: number | null,
+  freshersOnly?: boolean
+): string {
+  if (freshersOnly) return 'Fresher';
+  const min = Math.max(0, Number(minMonths) || 0);
+  const hasMax = maxMonths !== undefined && maxMonths !== null && Number(maxMonths) > min;
+  if (hasMax) return `${formatExperienceMonths(min)} - ${formatExperienceMonths(Number(maxMonths))}`;
+  if (min === 0) return 'Fresher / 0 yrs';
+  return `${formatExperienceMonths(min)}+`;
+}

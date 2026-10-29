@@ -49,7 +49,7 @@ import {
 import { JobListSkeleton } from '@/components/skeletons';
 import { EmptyState } from '@/components/empty-state';
 import { JobWithMeta, applicationsApi, jobsApi, workerApi, WorkerWithMeta } from '@/lib/scn-api';
-import { formatSalary, timeAgo } from '@/lib/format';
+import { formatExperienceRange, formatSalary, timeAgo } from '@/lib/format';
 import { getApiErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Application } from '@/lib/types';
@@ -283,7 +283,7 @@ export function JobDetailsView({ jobId, backUrl = '/jobs', hrefPrefix = '/jobs' 
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs sm:text-sm font-bold text-slate-700 pt-1">
               <div className="flex items-center gap-1.5 whitespace-nowrap">
                 <Briefcase className="h-4 w-4 text-slate-400 shrink-0" />
-                <span>{job.experienceMin} - {job.experienceMax} years</span>
+                <span>{formatExperienceRange(job.minExperienceMonths ?? job.experienceMin * 12, job.maxExperienceMonths ?? (job.experienceMax ? job.experienceMax * 12 : null), job.freshersOnly)}</span>
               </div>
               <span className="text-slate-300 hidden sm:inline">•</span>
               <div className="flex items-center gap-1.5 whitespace-nowrap">
@@ -393,7 +393,7 @@ export function JobDetailsView({ jobId, backUrl = '/jobs', hrefPrefix = '/jobs' 
             <p className="text-sm font-bold text-slate-900">{job.title}</p>
             {/* <p><strong>Company:</strong> {job.companyName}</p> */}
             <p><strong>Location:</strong> {job.locality && !job.location.includes(job.locality) ? `${job.locality}, ${job.location}` : job.location}</p>
-            <p><strong>Experience:</strong> {job.experienceMin}-{job.experienceMax} Years</p>
+            <p><strong>Experience:</strong> {formatExperienceRange(job.minExperienceMonths ?? job.experienceMin * 12, job.maxExperienceMonths ?? (job.experienceMax ? job.experienceMax * 12 : null), job.freshersOnly)}</p>
             <p><strong>Job Type:</strong> <span className="capitalize">{job.jobType}</span></p>
           </div>
         </div>

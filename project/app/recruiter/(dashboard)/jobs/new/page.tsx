@@ -17,13 +17,6 @@ import {
   Rocket,
   Users,
   Eye,
-  GraduationCap,
-  Search,
-  X,
-  Loader2,
-  ChevronRight,
-  Check,
-  Plus
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -34,10 +27,19 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
-import { PageHeader } from '@/components/page-header';
 import { cn } from '@/lib/utils';
 import { getApiErrorMessage } from '@/lib/api';
+import { formatExperienceRange } from '@/lib/format';
 import { MasterRawItem, jobsApi, masterDataApi, BackendLocation } from '@/lib/scn-api';
+import {
+  ComboOption,
+  MultiSelectCombobox,
+  SuggestInput,
+  handleEnterAsTab,
+  splitIdsAndNames,
+  stripNew,
+  NEW_PREFIX,
+} from '@/components/searchable-combobox';
 
 const BENEFITS_OPTIONS = [
   'Cab',
@@ -67,38 +69,73 @@ const QUAL_CATEGORY_LABELS: Record<string, string> = {
 };
 const QUAL_CATEGORY_ORDER = ['TEN', 'TWELVE', 'DIPLOMA', 'GRADUATE', 'POST_GRADUATE', 'ANY'];
 
-const schema = z.object({
-  jobRoleName: z.string().min(2, 'Job role / title is required'),
-  industryId: z.string().optional(),
-  industryIds: z.array(z.string()).default([]),
-  functionId: z.string().optional(),
-  functionIds: z.array(z.string()).default([]),
-  functionName: z.string().optional(),
-  locationId: z.string().min(1, 'Location is required'),
-  jobRoleId: z.string().optional(),
-  skillIds: z.array(z.string()).default([]),
-  qualificationIds: z.array(z.string()).default([]),
-  wageMin: z.coerce.number().min(0, 'Minimum salary must be positive'),
-  wageMax: z.coerce.number().min(0, 'Maximum salary must be positive'),
-  wageType: z.enum(['monthly', 'annual', 'daily']).default('monthly'),
-  workingDays: z.coerce.number().min(1).max(7).default(5),
-  workingStatus: z.string().optional(),
-  gender: z.enum(['ANY', 'MALE', 'FEMALE']).default('ANY'),
-  freshersOnly: z.boolean().default(false),
-  shiftType: z.enum(['day', 'night', 'rotational']),
-  jobType: z.enum(['full-time', 'part-time', 'contract']),
-  headcountRequired: z.coerce.number().min(1, 'Headcount is required'),
-  minExperienceYears: z.coerce.number().min(0, 'Minimum experience years must be positive'),
-  maxExperienceYears: z.coerce.number().min(0).optional(),
-  benefitNames: z.array(z.string()).default([]),
-  assetNames: z.array(z.string()).default([]),
-  languageIds: z.array(z.string()).default([]),
-  description: z.string().min(10, 'Description must be at least 10 characters'),
-  highlights: z.string().optional(),
-  responsibilities: z.string().optional(),
-  requirements: z.string().optional(),
-  benefits: z.string().optional(),
-});
+const blankToUndefined = (v: unknown) =>
+  v === '' || v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v)) ? undefined : v;
+
+// Experience is captured as years + months (months 0-11) and sent to the API as total months.
+const requiredCount = (max: number) =>
+  z.preprocess((v) => blankToUndefined(v) ?? 0, z.coerce.number().int('Must be a whole number').min(0).max(max, `Maximum ${max}`));
+const optionalCount = (max: number) =>
+  z.preprocess(blankToUndefined, z.coerce.number().int('Must be a whole number').min(0).max(max, `Maximum ${max}`).optional());
+
+const schema = z
+  .object({
+    jobRoleName: z.string().min(2, 'Job role / title is required'),
+    industryId: z.string().optional(),
+    industryIds: z.array(z.string()).default([]),
+    functionId: z.string().optional(),
+    functionIds: z.array(z.string()).default([]),
+    functionName: z.string().optional(),
+    locationId: z.string().min(1, 'Location is required'),
+    jobRoleId: z.string().optional(),
+    skillIds: z.array(z.string()).default([]),
+    qualificationIds: z.array(z.string()).default([]),
+    wageMin: z.coerce.number().min(0, 'Minimum salary must be positive'),
+    wageMax: z.coerce.number().min(0, 'Maximum salary must be positive'),
+    wageType: z.enum(['monthly', 'annual', 'daily']).default('monthly'),
+    workingDays: z.coerce.number().min(1).max(7).default(5),
+    workingStatus: z.string().optional(),
+    gender: z.enum(['ANY', 'MALE', 'FEMALE']).default('ANY'),
+    freshersOnly: z.boolean().default(false),
+    shiftType: z.enum(['day', 'night', 'rotational']),
+    jobType: z.enum(['full-time', 'part-time', 'contract']),
+    headcountRequired: z.coerce.number().min(1, 'Headcount is required'),
+    minExperienceYears: requiredCount(60),
+    minExperienceMonths: requiredCount(11),
+    maxExperienceYears: optionalCount(60),
+    maxExperienceMonths: optionalCount(11),
+    benefitNames: z.array(z.string()).default([]),
+    assetNames: z.array(z.string()).default([]),
+    languageIds: z.array(z.string()).default([]),
+    description: z.string().min(10, 'Description must be at least 10 characters'),
+    highlights: z.string().optional(),
+    responsibilities: z.string().optional(),
+    requirements: z.string().optional(),
+    benefits: z.string().optional(),
+  })
+  .superRefine((d, ctx) => {
+    const hasIndustry = (d.industryIds && d.industryIds.length > 0) || Boolean(d.industryId);
+    if (!hasIndustry) {
+      ctx.addIssue({ code: 'custom', path: ['industryIds'], message: 'Select at least one industry' });
+    }
+    if (d.wageMax < d.wageMin) {
+      ctx.addIssue({ code: 'custom', path: ['wageMax'], message: 'Maximum wage cannot be less than minimum wage' });
+    }
+    if (!d.freshersOnly) {
+      const hasMax = d.maxExperienceYears !== undefined || d.maxExperienceMonths !== undefined;
+      if (hasMax) {
+        const min = (d.minExperienceYears ?? 0) * 12 + (d.minExperienceMonths ?? 0);
+        const max = (d.maxExperienceYears ?? 0) * 12 + (d.maxExperienceMonths ?? 0);
+        if (max < min) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['maxExperienceYears'],
+            message: 'Maximum experience cannot be less than minimum experience',
+          });
+        }
+      }
+    }
+  });
 
 type FormData = z.infer<typeof schema>;
 
@@ -118,46 +155,32 @@ const formatWage = (min: number, max: number, period = 'monthly') => {
 
 const EMPTY_ARRAY: any[] = [];
 
+const toOptions = (items: MasterRawItem[]): ComboOption[] =>
+  items
+    .map((item: any) => ({ value: String(item.id), label: String(item.name ?? item.id) }))
+    .filter((o) => o.label);
+
+const stringOptions = (items: string[]): ComboOption[] => items.map((s) => ({ value: s, label: s }));
+
+const SECTION_HEADER = 'flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3';
+const CARD = 'p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4';
+
 export default function CreateJobPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editJobId = searchParams?.get('id') || null;
   const isEditing = Boolean(editJobId);
-  const [skillSearch, setSkillSearch] = useState('');
-  const [isSkillOpen, setIsSkillOpen] = useState(false);
-  const [qualSearch, setQualSearch] = useState('');
-  const [isQualOpen, setIsQualOpen] = useState(false);
-  const [langSearch, setLangSearch] = useState('');
-  const [isLangOpen, setIsLangOpen] = useState(false);
   const [selectedQualLevel, setSelectedQualLevel] = useState<string>('ALL');
 
   const [jobRoleSearch, setJobRoleSearch] = useState('');
-  const [isJobRoleOpen, setIsJobRoleOpen] = useState(false);
-
-  const [functionSearch, setFunctionSearch] = useState('');
-  const [isFunctionOpen, setIsFunctionOpen] = useState(false);
-
-  const [industrySearch, setIndustrySearch] = useState('');
-  const [isIndustryOpen, setIsIndustryOpen] = useState(false);
 
   const [selectedState, setSelectedState] = useState<string>('');
   const [selectedCity, setSelectedCity] = useState<string>('');
   const [selectedLocalityId, setSelectedLocalityId] = useState<string>('');
 
   const [stateInput, setStateInput] = useState('');
-  const [isStateOpen, setIsStateOpen] = useState(false);
-
   const [cityInput, setCityInput] = useState('');
-  const [isCityOpen, setIsCityOpen] = useState(false);
-
   const [localityInput, setLocalityInput] = useState('');
-  const [isLocalityOpen, setIsLocalityOpen] = useState(false);
-
-  const [benefitSearch, setBenefitSearch] = useState('');
-  const [isBenefitOpen, setIsBenefitOpen] = useState(false);
-
-  const [assetSearch, setAssetSearch] = useState('');
-  const [isAssetOpen, setIsAssetOpen] = useState(false);
 
   const { data: statesData, isLoading: isLoadingStates } = useQuery<string[]>({
     queryKey: ['master', 'locations', 'states'],
@@ -179,23 +202,18 @@ export default function CreateJobPage() {
   });
   const localities = localitiesData ?? EMPTY_ARRAY;
 
-  const filteredStates = states.filter((s: string) => {
-    if (!stateInput || stateInput === selectedState) return true;
-    return s.toLowerCase().includes(stateInput.toLowerCase());
-  });
-  const filteredCities = cities.filter((c: string) => {
-    if (!cityInput || cityInput === selectedCity) return true;
-    return c.toLowerCase().includes(cityInput.toLowerCase());
-  });
-  const filteredLocalities = localities.filter((l: BackendLocation) => {
-    const loc = localities.find((locItem: BackendLocation) => String(locItem.id) === selectedLocalityId);
-    if (!localityInput || (loc && l.locality === loc.locality)) return true;
-    return l.locality.toLowerCase().includes(localityInput.toLowerCase());
-  });
+  const stateOptions = useMemo(() => stringOptions(states), [states]);
+  const cityOptions = useMemo(() => stringOptions(cities), [cities]);
+  const localityOptions = useMemo<ComboOption[]>(
+    () => localities.map((l: BackendLocation) => ({ value: String(l.id), label: l.locality })),
+    [localities]
+  );
 
   const handleStateChange = (state: string) => {
-    setIsStateOpen(false);
-    if (state === selectedState) return;
+    if (state === selectedState) {
+      setStateInput(state);
+      return;
+    }
     setSelectedState(state);
     setStateInput(state);
     setSelectedCity('');
@@ -206,8 +224,10 @@ export default function CreateJobPage() {
   };
 
   const handleCityChange = (city: string) => {
-    setIsCityOpen(false);
-    if (city === selectedCity) return;
+    if (city === selectedCity) {
+      setCityInput(city);
+      return;
+    }
     setSelectedCity(city);
     setCityInput(city);
     setSelectedLocalityId('');
@@ -216,8 +236,6 @@ export default function CreateJobPage() {
   };
 
   const handleLocalityChange = (locationId: string) => {
-    setIsLocalityOpen(false);
-    if (locationId === selectedLocalityId) return;
     setSelectedLocalityId(locationId);
     const loc = localities.find((l: BackendLocation) => String(l.id) === locationId);
     setLocalityInput(loc ? loc.locality : '');
@@ -230,7 +248,6 @@ export default function CreateJobPage() {
     if (!st || !ct || !customLocality) return;
 
     setLocalityInput(customLocality);
-    setIsLocalityOpen(false);
 
     try {
       const created = await masterDataApi.create('locations', {
@@ -296,6 +313,24 @@ export default function CreateJobPage() {
     return ASSETS_OPTIONS;
   }, [rawAssetsData]);
 
+  const jobRoleOptions = useMemo(() => toOptions(jobRoles), [jobRoles]);
+  const industryOptions = useMemo(() => toOptions(industries), [industries]);
+  const functionOptions = useMemo(() => toOptions(functions), [functions]);
+  const skillOptions = useMemo(() => toOptions(skills), [skills]);
+  const languageOptions = useMemo(() => toOptions(languages), [languages]);
+  const benefitOptions = useMemo(() => stringOptions(benefitsOptionsList), [benefitsOptionsList]);
+  const assetOptions = useMemo(() => stringOptions(assetsOptionsList), [assetsOptionsList]);
+  const qualOptions = useMemo(
+    () =>
+      toOptions(
+        qualifications.filter((q: any) => {
+          if (selectedQualLevel === 'ALL') return true;
+          return String(q.level || '').toUpperCase() === selectedQualLevel.toUpperCase();
+        })
+      ),
+    [qualifications, selectedQualLevel]
+  );
+
   const editJobQuery = useQuery({
     queryKey: ['recruiter-job-edit', editJobId],
     queryFn: () => jobsApi.get(editJobId!),
@@ -309,7 +344,6 @@ export default function CreateJobPage() {
     watch,
     setValue,
     getValues,
-    reset,
     formState: { errors },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -317,6 +351,8 @@ export default function CreateJobPage() {
       jobRoleName: '',
       functionId: '',
       functionName: '',
+      industryIds: [],
+      functionIds: [],
       workingStatus: 'IMMEDIATE_JOINER',
       wageMin: 0,
       wageMax: 0,
@@ -331,7 +367,9 @@ export default function CreateJobPage() {
       freshersOnly: false,
       headcountRequired: 1,
       minExperienceYears: 0,
+      minExperienceMonths: 0,
       maxExperienceYears: undefined,
+      maxExperienceMonths: undefined,
       shiftType: 'day',
       jobType: 'full-time',
       responsibilities: '',
@@ -344,30 +382,38 @@ export default function CreateJobPage() {
   const selectedSkillIds = formData.skillIds || [];
   const selectedQualificationIds = formData.qualificationIds || [];
   const selectedLanguageIds = formData.languageIds || [];
-  const selectedIndustryIds = formData.industryIds || (formData.industryId ? [formData.industryId] : []);
-  const selectedFunctionIds = formData.functionIds || (formData.functionId ? [formData.functionId] : []);
+  const selectedIndustryIds = formData.industryIds || [];
+  const selectedFunctionIds = formData.functionIds || [];
 
   useEffect(() => {
     if (existingJob) {
-      const roleName = (existingJob as any).jobRoleName || existingJob.title || (existingJob as any).jobRole?.name || '';
+      const job: any = existingJob;
+      const roleName = job.jobRoleName || job.title || job.jobRole?.name || '';
       setValue('jobRoleName', roleName);
       setJobRoleSearch(roleName);
-      if (existingJob.jobRoleId) setValue('jobRoleId', String(existingJob.jobRoleId));
+      if (job.jobRoleId) setValue('jobRoleId', String(job.jobRoleId));
 
-      if (existingJob.industryId) setValue('industryId', String(existingJob.industryId));
-      const indName = (existingJob as any).industryName || existingJob.industry || (existingJob as any).industry?.name || '';
-      if (indName) setIndustrySearch(indName);
+      const indIds: string[] =
+        Array.isArray(job.industryIds) && job.industryIds.length > 0
+          ? job.industryIds.map(String)
+          : job.industryId
+            ? [String(job.industryId)]
+            : [];
+      setValue('industryIds', indIds);
+      setValue('industryId', indIds[0] ?? '');
 
-      if (existingJob.functionId) setValue('functionId', String(existingJob.functionId));
-      const funcName = (existingJob as any).functionName || existingJob.departmentName || existingJob.department || '';
-      if (funcName) {
-        setValue('functionName', funcName);
-        setFunctionSearch(funcName);
-      }
+      const fnIds: string[] =
+        Array.isArray(job.functionIds) && job.functionIds.length > 0
+          ? job.functionIds.map(String)
+          : job.functionId
+            ? [String(job.functionId)]
+            : [];
+      setValue('functionIds', fnIds);
+      setValue('functionId', fnIds[0] ?? '');
 
-      if (existingJob.locationId) {
-        setValue('locationId', String(existingJob.locationId));
-        const loc: any = locations.find((l: any) => String(l.id) === String(existingJob.locationId));
+      if (job.locationId) {
+        setValue('locationId', String(job.locationId));
+        const loc: any = locations.find((l: any) => String(l.id) === String(job.locationId));
         if (loc) {
           if (loc.state) {
             setSelectedState(loc.state);
@@ -384,55 +430,60 @@ export default function CreateJobPage() {
         }
       }
 
-      setValue('description', existingJob.description || '');
-      const respStr = Array.isArray(existingJob.responsibilities)
-        ? existingJob.responsibilities.join('\n')
-        : String(existingJob.responsibilities || '');
+      setValue('description', job.description || '');
+      const respStr = Array.isArray(job.responsibilities)
+        ? job.responsibilities.join('\n')
+        : String(job.responsibilities || '');
       setValue('responsibilities', respStr);
 
-      const reqStr = Array.isArray(existingJob.requirements)
-        ? existingJob.requirements.join('\n')
-        : String(existingJob.requirements || '');
+      const reqStr = Array.isArray(job.requirements)
+        ? job.requirements.join('\n')
+        : String(job.requirements || '');
       setValue('requirements', reqStr);
 
-      const hlStr = Array.isArray((existingJob as any).highlights)
-        ? (existingJob as any).highlights.join('\n')
-        : String((existingJob as any).highlights || '');
+      const hlStr = Array.isArray(job.highlights)
+        ? job.highlights.join('\n')
+        : String(job.highlights || '');
       setValue('highlights', hlStr);
 
-      const openings = (existingJob as any).openings || (existingJob as any).headcountRequired || 1;
+      const openings = job.openings || job.headcountRequired || 1;
       setValue('headcountRequired', Number(openings));
 
-      const gender = (existingJob as any).genderPreference || (existingJob as any).gender || 'ANY';
+      const gender = job.genderPreference || job.gender || 'ANY';
       setValue('gender', gender as any);
 
-      const isFresher = Boolean(existingJob.freshersOnly || (existingJob as any).isFresherFriendly);
+      const isFresher = Boolean(job.freshersOnly || job.isFresherFriendly);
       setValue('freshersOnly', isFresher);
 
-      const expMinM = (existingJob as any).minExperienceMonths !== undefined
-        ? (existingJob as any).minExperienceMonths
-        : ((existingJob as any).experienceMin !== undefined ? (existingJob as any).experienceMin * 12 : 0);
+      const expMinM: number =
+        job.minExperienceMonths !== undefined && job.minExperienceMonths !== null
+          ? Number(job.minExperienceMonths)
+          : job.experienceMin !== undefined
+            ? Number(job.experienceMin) * 12
+            : 0;
+      const expMaxM: number | undefined =
+        job.maxExperienceMonths !== undefined && job.maxExperienceMonths !== null
+          ? Number(job.maxExperienceMonths)
+          : undefined;
 
-      const expMaxM = (existingJob as any).maxExperienceMonths !== undefined
-        ? (existingJob as any).maxExperienceMonths
-        : ((existingJob as any).experienceMax !== undefined ? (existingJob as any).experienceMax * 12 : undefined);
-
-      setValue('minExperienceYears', Math.floor((expMinM || 0) / 12));
-      if (expMaxM !== undefined && expMaxM !== null) {
+      setValue('minExperienceYears', Math.floor(expMinM / 12));
+      setValue('minExperienceMonths', expMinM % 12);
+      if (expMaxM !== undefined) {
         setValue('maxExperienceYears', Math.floor(expMaxM / 12));
+        setValue('maxExperienceMonths', expMaxM % 12);
       }
 
-      const wMin = existingJob.wageMin || existingJob.salaryMin || (existingJob as any).monthlyWageMin || (existingJob as any).dailyWageMin || (existingJob as any).yearlyWageMin || 0;
-      const wMax = existingJob.wageMax || existingJob.salaryMax || (existingJob as any).monthlyWageMax || (existingJob as any).dailyWageMax || (existingJob as any).yearlyWageMax || wMin;
-      const wType = (existingJob as any).wageType || (existingJob as any).wagePeriod || 'monthly';
+      const wMin = job.wageMin || job.salaryMin || job.monthlyWageMin || job.dailyWageMin || job.yearlyWageMin || 0;
+      const wMax = job.wageMax || job.salaryMax || job.monthlyWageMax || job.dailyWageMax || job.yearlyWageMax || wMin;
+      const wType = job.wageType || job.wagePeriod || 'monthly';
 
       setValue('wageMin', Number(wMin));
       setValue('wageMax', Number(wMax));
       setValue('wageType', wType as any);
 
-      if ((existingJob as any).workingStatus) setValue('workingStatus', (existingJob as any).workingStatus);
+      if (job.workingStatus) setValue('workingStatus', job.workingStatus);
 
-      const rawWorkingDays = (existingJob as any).workingDays;
+      const rawWorkingDays = job.workingDays;
       if (rawWorkingDays) {
         if (String(rawWorkingDays).includes('6') || String(rawWorkingDays).toUpperCase().includes('SIX')) {
           setValue('workingDays', 6);
@@ -441,147 +492,102 @@ export default function CreateJobPage() {
         }
       }
 
-      const shiftVal = (existingJob as any).shift || (existingJob as any).shiftType || 'day';
+      const shiftVal = job.shift || job.shiftType || 'day';
       setValue('shiftType', String(shiftVal).toLowerCase() as any);
 
-      const rawJobType = String(existingJob.jobType || 'full-time').toLowerCase();
+      const rawJobType = String(job.jobType || 'full-time').toLowerCase();
       const formattedJobType = rawJobType.includes('part') ? 'part-time' : rawJobType.includes('contract') ? 'contract' : 'full-time';
       setValue('jobType', formattedJobType as any);
 
-      if (existingJob.skills && Array.isArray(existingJob.skills)) {
-        const sIds = skills
-          .filter((s: any) => existingJob.skills.includes(s.name) || existingJob.skills.includes(String(s.id)))
-          .map((s: any) => String(s.id));
-        if (sIds.length > 0) {
-          setValue('skillIds', sIds);
-        } else {
-          const rawSkillIds = existingJob.skills.map((s: any) => typeof s === 'object' ? String(s.id) : String(s)).filter(Boolean);
-          setValue('skillIds', rawSkillIds);
-        }
+      // Names coming from the API are mapped back to master-data ids; unknown names stay as custom entries.
+      const mapNamesToValues = (names: any[], master: MasterRawItem[], allowCustom: boolean) =>
+        names
+          .map((entry: any) => {
+            if (entry && typeof entry === 'object') return String(entry.id);
+            const text = String(entry);
+            const found: any = master.find((m: any) => m.name === text || String(m.id) === text);
+            if (found) return String(found.id);
+            return allowCustom ? `${NEW_PREFIX}${text}` : '';
+          })
+          .filter(Boolean);
+
+      if (Array.isArray(job.skills)) setValue('skillIds', mapNamesToValues(job.skills, skills, true));
+      if (Array.isArray(job.qualifications)) setValue('qualificationIds', mapNamesToValues(job.qualifications, qualifications, false));
+
+      if (Array.isArray(job.languageIds)) {
+        setValue('languageIds', job.languageIds.map(String));
+      } else if (Array.isArray(job.languages)) {
+        setValue('languageIds', mapNamesToValues(job.languages, languages, true));
       }
 
-      if (existingJob.qualifications && Array.isArray(existingJob.qualifications)) {
-        const qIds = qualifications
-          .filter((q: any) => (existingJob.qualifications as any).includes(q.name) || (existingJob.qualifications as any).includes(String(q.id)))
-          .map((q: any) => String(q.id));
-        if (qIds.length > 0) {
-          setValue('qualificationIds', qIds);
-        } else {
-          const rawQualIds = (existingJob.qualifications as any).map((q: any) => typeof q === 'object' ? String(q.id) : String(q)).filter(Boolean);
-          setValue('qualificationIds', rawQualIds);
-        }
-      }
-
-      if ((existingJob as any).languageIds && Array.isArray((existingJob as any).languageIds)) {
-        setValue('languageIds', (existingJob as any).languageIds.map(String));
-      } else if (existingJob.languages && Array.isArray(existingJob.languages)) {
-        const lIds = languages
-          .filter((l: any) => (existingJob.languages as any).includes(l.name) || (existingJob.languages as any).includes(String(l.id)))
-          .map((l: any) => String(l.id));
-        if (lIds.length > 0) {
-          setValue('languageIds', lIds);
-        } else {
-          const rawLangIds = existingJob.languages.map((l: any) => typeof l === 'object' ? String(l.id) : String(l)).filter(Boolean);
-          setValue('languageIds', rawLangIds);
-        }
-      }
-
-      const bNames = (existingJob as any).benefitNames || (existingJob as any).benefits || [];
+      const bNames = job.benefitNames || job.benefits || [];
       if (Array.isArray(bNames)) {
-        const parsedBenefits = bNames.map((b: any) => typeof b === 'string' ? b : b?.name).filter(Boolean);
-        setValue('benefitNames', parsedBenefits);
+        setValue('benefitNames', bNames.map((b: any) => (typeof b === 'string' ? b : b?.name)).filter(Boolean));
       }
 
-      const aNames = (existingJob as any).assetNames || (existingJob as any).assets || [];
+      const aNames = job.assetNames || job.assets || [];
       if (Array.isArray(aNames)) {
-        const parsedAssets = aNames.map((a: any) => typeof a === 'string' ? a : a?.name).filter(Boolean);
-        setValue('assetNames', parsedAssets);
+        setValue('assetNames', aNames.map((a: any) => (typeof a === 'string' ? a : a?.name)).filter(Boolean));
       }
     }
-  }, [existingJob, locations, skills, qualifications, setValue]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [existingJob, locations, skills, qualifications, languages, setValue]);
 
   const publishMutation = useMutation({
     mutationFn: async (data: FormData) => {
-      const selectedRole = jobRoles.find((r: any) => String(r.id) === data.jobRoleId);
-      const roleName = data.jobRoleName || (selectedRole && 'name' in selectedRole ? selectedRole.name : jobRoleSearch);
-      const selectedIndustry = industries.find((i: any) => String(i.id) === data.industryId);
-      const indName = selectedIndustry && 'name' in selectedIndustry ? selectedIndustry.name : industrySearch;
-      const selectedFunction = functions.find((f: any) => String(f.id) === data.functionId);
-      const funcName = data.functionName || (selectedFunction && 'name' in selectedFunction ? selectedFunction.name : functionSearch);
+      const industry = splitIdsAndNames(data.industryIds);
+      const fn = splitIdsAndNames(data.functionIds);
+      const skill = splitIdsAndNames(data.skillIds);
+      const qual = splitIdsAndNames(data.qualificationIds);
+      const lang = splitIdsAndNames(data.languageIds);
 
-        const selectedLanguageNames = data.languageIds && data.languageIds.length > 0
-          ? data.languageIds.map((id) => {
-              const lang = languages.find((l: any) => String(l.id) === id);
-              return lang && 'name' in lang ? lang.name : id;
-            }).filter(Boolean)
-          : undefined;
+      const languageNames = (data.languageIds || [])
+        .map((value) => {
+          if (value.startsWith(NEW_PREFIX)) return stripNew(value).trim();
+          const found: any = languages.find((l: any) => String(l.id) === value);
+          return found?.name || '';
+        })
+        .filter(Boolean);
 
-        const cleanSkillIds = (data.skillIds || [])
-          .map((id: any) => Number(id))
-          .filter((n: number) => !isNaN(n) && n > 0);
+      const minMonths = (data.minExperienceYears ?? 0) * 12 + (data.minExperienceMonths ?? 0);
+      const hasMax = data.maxExperienceYears !== undefined || data.maxExperienceMonths !== undefined;
+      const maxMonths = hasMax ? (data.maxExperienceYears ?? 0) * 12 + (data.maxExperienceMonths ?? 0) : null;
 
-        const cleanQualIds = (data.qualificationIds || [])
-          .map((id: any) => Number(id))
-          .filter((n: number) => !isNaN(n) && n > 0);
-
-        const cleanLangIds = (data.languageIds || [])
-          .map((id: any) => Number(id))
-          .filter((n: number) => !isNaN(n) && n > 0);
-
-        const cleanIndIds = (data.industryIds && data.industryIds.length > 0 ? data.industryIds : (data.industryId ? [data.industryId] : []))
-          .map((id: any) => Number(id))
-          .filter((n: number) => !isNaN(n) && n > 0);
-
-        const cleanFuncIds = (data.functionIds && data.functionIds.length > 0 ? data.functionIds : (data.functionId ? [data.functionId] : []))
-          .map((id: any) => Number(id))
-          .filter((n: number) => !isNaN(n) && n > 0);
-
-        const selectedSkillNames = (data.skillIds || []).map((id) => {
-          const skill = skills.find((s: any) => String(s.id) === id);
-          return skill && 'name' in skill ? skill.name : id;
-        }).filter(Boolean);
-
-        const selectedQualNames = (data.qualificationIds || []).map((id) => {
-          const qual = qualifications.find((q: any) => String(q.id) === id);
-          return qual && 'name' in qual ? qual.name : id;
-        }).filter(Boolean);
-
-        const payload = {
-          jobRoleName: roleName,
-          description: data.description,
-          industryId: cleanIndIds.length > 0 ? cleanIndIds[0] : (data.industryId ? Number(data.industryId) : undefined),
-          industryIds: cleanIndIds.length > 0 ? cleanIndIds : undefined,
-          industryName: indName || undefined,
-          functionId: cleanFuncIds.length > 0 ? cleanFuncIds[0] : (data.functionId ? Number(data.functionId) : undefined),
-          functionIds: cleanFuncIds.length > 0 ? cleanFuncIds : undefined,
-          functionName: funcName || undefined,
-          locationId: Number(data.locationId),
-          jobRoleId: data.jobRoleId ? Number(data.jobRoleId) : undefined,
-          skillIds: cleanSkillIds.length > 0 ? cleanSkillIds : undefined,
-          skills: selectedSkillNames.length > 0 ? selectedSkillNames : undefined,
-          qualificationIds: cleanQualIds.length > 0 ? cleanQualIds : undefined,
-          qualifications: selectedQualNames.length > 0 ? selectedQualNames : undefined,
-          languageIds: cleanLangIds.length > 0 ? cleanLangIds : undefined,
-          languages: selectedLanguageNames,
-          wageMin: data.wageMin,
-          wageMax: data.wageMax,
-          wageType: data.wageType,
-          workingDays: data.workingDays,
-          workingStatus: data.workingStatus || undefined,
-          gender: data.gender,
-          freshersOnly: data.freshersOnly,
-          shiftType: data.shiftType,
-          jobType: data.jobType,
-          headcountRequired: data.headcountRequired,
-          minExperienceMonths: data.freshersOnly ? undefined : (data.minExperienceYears !== undefined ? data.minExperienceYears * 12 : undefined),
-          maxExperienceMonths: data.freshersOnly ? undefined : (data.maxExperienceYears !== undefined ? data.maxExperienceYears * 12 : undefined),
-          benefitNames: data.benefitNames,
-          assetNames: data.assetNames,
-          responsibilities: splitLines(data.responsibilities),
-          requirements: splitLines(data.requirements),
-          highlights: data.highlights ? splitLines(data.highlights) : (data.benefitNames && data.benefitNames.length > 0 ? data.benefitNames : undefined),
-          benefits: splitLines(data.benefits),
-        };
+      const payload = {
+        jobRoleName: data.jobRoleName.trim(),
+        description: data.description,
+        industryId: industry.ids[0],
+        industryIds: industry.ids.length > 0 ? industry.ids : undefined,
+        industryNames: industry.names.length > 0 ? industry.names : undefined,
+        functionId: fn.ids[0],
+        functionIds: fn.ids.length > 0 ? fn.ids : undefined,
+        functionNames: fn.names.length > 0 ? fn.names : undefined,
+        locationId: Number(data.locationId),
+        jobRoleId: data.jobRoleId ? Number(data.jobRoleId) : undefined,
+        skillIds: skill.ids.length > 0 ? skill.ids : undefined,
+        skillNames: skill.names.length > 0 ? skill.names : undefined,
+        qualificationIds: qual.ids.length > 0 ? qual.ids : undefined,
+        languageIds: lang.ids.length > 0 ? lang.ids : undefined,
+        languages: languageNames,
+        wageMin: data.wageMin,
+        wageMax: data.wageMax,
+        wageType: data.wageType,
+        workingDays: data.workingDays,
+        workingStatus: data.workingStatus || undefined,
+        gender: data.gender,
+        freshersOnly: data.freshersOnly,
+        shiftType: data.shiftType,
+        jobType: data.jobType,
+        headcountRequired: data.headcountRequired,
+        minExperienceMonths: data.freshersOnly ? undefined : minMonths,
+        maxExperienceMonths: data.freshersOnly ? undefined : maxMonths,
+        benefitNames: data.benefitNames,
+        assetNames: data.assetNames,
+        responsibilities: splitLines(data.responsibilities),
+        requirements: splitLines(data.requirements),
+        highlights: data.highlights ? splitLines(data.highlights) : (data.benefitNames && data.benefitNames.length > 0 ? data.benefitNames : undefined),
+        benefits: splitLines(data.benefits),
+      };
 
       if (isEditing && editJobId) {
         return jobsApi.update(editJobId, payload);
@@ -597,43 +603,25 @@ export default function CreateJobPage() {
     onError: (error) => toast.error(getApiErrorMessage(error, isEditing ? 'Failed to update job' : 'Failed to publish job')),
   });
 
-  const toggleId = (field: 'skillIds' | 'qualificationIds' | 'languageIds' | 'industryIds' | 'functionIds', id: string) => {
-    const current: string[] = getValues(field) || [];
-    const updated = current.includes(id) ? current.filter((item) => item !== id) : [...current, id];
-    setValue(field, updated, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
-
-    if (field === 'industryIds') {
-      if (updated.length > 0) {
-        setValue('industryId', updated[0], { shouldValidate: true });
-      } else {
-        setValue('industryId', '', { shouldValidate: true });
-      }
-    }
-
-    if (field === 'functionIds') {
-      if (updated.length > 0) {
-        setValue('functionId', updated[0]);
-        const funcObj = functions.find((f: any) => String(f.id) === updated[0]);
-        if (funcObj && 'name' in funcObj) setValue('functionName', funcObj.name);
-      } else {
-        setValue('functionId', '');
-        setValue('functionName', '');
-      }
-    }
+  const setIdList = (field: 'skillIds' | 'qualificationIds' | 'languageIds', next: string[]) => {
+    setValue(field, next, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
   };
 
-  const toggleBenefit = (benefit: string) => {
-    const current: string[] = getValues('benefitNames') || [];
-    const isChecked = current.includes(benefit);
-    const updated = isChecked ? current.filter((b) => b !== benefit) : [...current, benefit];
-    setValue('benefitNames', updated, { shouldDirty: true, shouldTouch: true });
+  const setIndustries = (next: string[]) => {
+    setValue('industryIds', next, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
+    setValue('industryId', next[0] ?? '', { shouldValidate: true });
   };
 
-  const toggleAsset = (asset: string) => {
-    const current: string[] = getValues('assetNames') || [];
-    const isChecked = current.includes(asset);
-    const updated = isChecked ? current.filter((a) => a !== asset) : [...current, asset];
-    setValue('assetNames', updated, { shouldDirty: true, shouldTouch: true });
+  const setFunctions = (next: string[]) => {
+    setValue('functionIds', next, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
+    setValue('functionId', next[0] ?? '');
+    const first = next[0];
+    if (first && !first.startsWith(NEW_PREFIX)) {
+      const funcObj: any = functions.find((f: any) => String(f.id) === first);
+      setValue('functionName', funcObj?.name || '');
+    } else {
+      setValue('functionName', first ? stripNew(first) : '');
+    }
   };
 
   const selectedLocationName = useMemo(() => {
@@ -642,65 +630,30 @@ export default function CreateJobPage() {
     return 'city' in loc ? `${loc.city} - ${loc.locality}` : 'Selected Location';
   }, [formData.locationId, locations]);
 
-  const selectedSkillsNames = useMemo(() => {
-    return selectedSkillIds.map(id => {
-      const s = skills.find(sk => String(sk.id) === id);
-      return s && 'name' in s ? s.name : id;
-    });
-  }, [selectedSkillIds, skills]);
-  const langSuggestions = useMemo(() => {
-    const selectedSet = new Set(selectedLanguageIds);
-    const query = langSearch.trim().toLowerCase();
-    if (!query) return languages.filter(l => !selectedSet.has(String(l.id)));
-    return languages.filter(l => {
-      const id = String(l.id);
-      if (selectedSet.has(id)) return false;
-      const name = 'name' in l ? l.name : '';
-      return name.toLowerCase().includes(query);
-    });
-  }, [languages, selectedLanguageIds, langSearch]);
+  const labelFor = (value: string, master: MasterRawItem[]) => {
+    if (value.startsWith(NEW_PREFIX)) return stripNew(value);
+    const found: any = master.find((m: any) => String(m.id) === value);
+    return found?.name || value;
+  };
 
-  const selectedQualificationsNames = useMemo(() => {
-    return selectedQualificationIds.map(id => {
-      const q = qualifications.find(qu => String(qu.id) === id);
-      return q && 'name' in q ? q.name : id;
-    });
-  }, [selectedQualificationIds, qualifications]);
+  const selectedSkillsNames = useMemo(
+    () => selectedSkillIds.map((id) => labelFor(id, skills)),
+    [selectedSkillIds, skills] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const selectedQualificationsNames = useMemo(
+    () => selectedQualificationIds.map((id) => labelFor(id, qualifications)),
+    [selectedQualificationIds, qualifications] // eslint-disable-line react-hooks/exhaustive-deps
+  );
 
-  const skillSuggestions = useMemo(() => {
-    const selectedSet = new Set(selectedSkillIds);
-    const query = skillSearch.trim().toLowerCase();
-    if (!query) return skills.filter(skill => !selectedSet.has(String(skill.id)));
-    return skills.filter(skill => {
-      const id = String(skill.id);
-      if (selectedSet.has(id)) return false;
-      const name = 'name' in skill ? skill.name : '';
-      return name.toLowerCase().includes(query);
-    });
-  }, [skills, selectedSkillIds, skillSearch]);
+  const previewExperience = formatExperienceRange(
+    (formData.minExperienceYears ?? 0) * 12 + (formData.minExperienceMonths ?? 0),
+    formData.maxExperienceYears !== undefined || formData.maxExperienceMonths !== undefined
+      ? (formData.maxExperienceYears ?? 0) * 12 + (formData.maxExperienceMonths ?? 0)
+      : null,
+    formData.freshersOnly
+  );
 
-  const qualSuggestions = useMemo(() => {
-    const selectedSet = new Set(selectedQualificationIds);
-    const query = qualSearch.trim().toLowerCase();
-
-    return qualifications.filter(q => {
-      const id = String(q.id);
-      if (selectedSet.has(id)) return false;
-
-      // Level filter matching candidate side categories
-      if (selectedQualLevel !== 'ALL') {
-        const level = (q as any).level || '';
-        if (level.toUpperCase() !== selectedQualLevel.toUpperCase()) {
-          return false;
-        }
-      }
-
-      if (!query && selectedQualLevel === 'ALL') return false;
-
-      const name = 'name' in q ? (q.name || '') : '';
-      return !query || name.toLowerCase().includes(query);
-    });
-  }, [qualifications, selectedQualificationIds, qualSearch, selectedQualLevel]);
+  const wageLabel = formData.wageType === 'daily' ? 'Per Day' : formData.wageType === 'annual' ? 'Per Annum' : 'Per Month';
 
   return (
     <div className="mx-auto max-w-7xl space-y-8 pb-12">
@@ -714,101 +667,58 @@ export default function CreateJobPage() {
         </div>
       </div>
 
-      <form onSubmit={handleSubmit(
-        (data) => publishMutation.mutate(data),
-        (errors) => {
-          const firstKey = Object.keys(errors)[0];
-          const errObj = errors[firstKey as keyof typeof errors];
-          const message = errObj && 'message' in errObj && typeof errObj.message === 'string'
-            ? errObj.message
-            : `Please complete the required field: ${firstKey}`;
-          toast.error(message);
-        }
-      )}>
+      {/* Enter moves to the next field (never submits the form); use the Publish button to submit. */}
+      <form
+        noValidate
+        onKeyDown={handleEnterAsTab}
+        onSubmit={handleSubmit(
+          (data) => publishMutation.mutate(data),
+          (formErrors) => {
+            const firstKey = Object.keys(formErrors)[0];
+            const errObj = formErrors[firstKey as keyof typeof formErrors];
+            const message = errObj && 'message' in errObj && typeof errObj.message === 'string'
+              ? errObj.message
+              : `Please complete the required field: ${firstKey}`;
+            toast.error(message);
+          }
+        )}
+      >
         <div className="grid gap-8 lg:grid-cols-3">
           {/* Left Column: Form Sections stacked */}
           <div className="lg:col-span-2 space-y-6">
 
             {/* Card 1: Basic Details */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <Briefcase className="h-5 w-5" />
                 <span>1. Basic Details</span>
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {/* Job Role Name / Title */}
-                <div className="space-y-2 relative sm:col-span-2 lg:col-span-2">
+                <div className="space-y-2 sm:col-span-2 lg:col-span-2">
                   <Label className="text-slate-700 font-extrabold text-xs">Job Role / Title *</Label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      placeholder="Type or select job role (e.g. Backend Developer)..."
-                      className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 px-3.5 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                      value={jobRoleSearch}
-                      onChange={(e) => {
-                        setJobRoleSearch(e.target.value);
-                        setValue('jobRoleName', e.target.value, { shouldValidate: true });
-                        setIsJobRoleOpen(true);
-                      }}
-                      onFocus={() => setIsJobRoleOpen(true)}
-                      onBlur={() => setTimeout(() => setIsJobRoleOpen(false), 200)}
-                    />
-                    <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                  </div>
-                    {isJobRoleOpen && (
-                      <div className="absolute left-0 right-0 top-[66px] z-50 max-h-[200px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                        {jobRoles
-                          .filter((role: any) => !jobRoleSearch || (role.name || '').toLowerCase().includes(jobRoleSearch.toLowerCase()))
-                          .map((role: any) => (
-                            <button
-                              key={role.id}
-                              type="button"
-                              className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                setValue('jobRoleId', String(role.id));
-                                setValue('jobRoleName', role.name || String(role.id), { shouldValidate: true });
-                                setJobRoleSearch(role.name || String(role.id));
-                                setIsJobRoleOpen(false);
-                              }}
-                              onClick={() => {
-                                setValue('jobRoleId', String(role.id));
-                                setValue('jobRoleName', role.name || String(role.id), { shouldValidate: true });
-                                setJobRoleSearch(role.name || String(role.id));
-                                setIsJobRoleOpen(false);
-                              }}
-                            >
-                              {'name' in role ? role.name : String(role.id)}
-                            </button>
-                          ))}
-                        {jobRoleSearch.trim() !== '' && !jobRoles.some((role: any) => (role.name || '').toLowerCase() === jobRoleSearch.trim().toLowerCase()) && (
-                          <button
-                            type="button"
-                            className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-blue-600 bg-blue-50/60 hover:bg-blue-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              setValue('jobRoleId', undefined);
-                              setValue('jobRoleName', jobRoleSearch.trim(), { shouldValidate: true });
-                              setJobRoleSearch(jobRoleSearch.trim());
-                              setIsJobRoleOpen(false);
-                            }}
-                            onClick={() => {
-                              setValue('jobRoleId', undefined);
-                              setValue('jobRoleName', jobRoleSearch.trim(), { shouldValidate: true });
-                              setJobRoleSearch(jobRoleSearch.trim());
-                              setIsJobRoleOpen(false);
-                            }}
-                          >
-                            <span className="flex items-center gap-1.5">
-                              <Plus className="h-3.5 w-3.5 text-blue-600" />
-                              Add &quot;{jobRoleSearch.trim()}&quot;
-                            </span>
-                            <Badge className="bg-blue-100 text-blue-700 text-[10px] font-bold border-none">Custom</Badge>
-                          </button>
-                        )}
-                      </div>
-                    )}
+                  <SuggestInput
+                    options={jobRoleOptions}
+                    value={jobRoleSearch}
+                    selectedLabel={formData.jobRoleId ? formData.jobRoleName : undefined}
+                    placeholder="Type or select job role (e.g. Backend Developer)..."
+                    onValueChange={(text) => {
+                      setJobRoleSearch(text);
+                      setValue('jobRoleId', undefined);
+                      setValue('jobRoleName', text, { shouldValidate: true });
+                    }}
+                    onSelect={(option) => {
+                      setValue('jobRoleId', option.value);
+                      setValue('jobRoleName', option.label, { shouldValidate: true });
+                      setJobRoleSearch(option.label);
+                    }}
+                    onCustom={(text) => {
+                      const clean = text.trim();
+                      setValue('jobRoleId', undefined);
+                      setValue('jobRoleName', clean, { shouldValidate: true });
+                      setJobRoleSearch(clean);
+                    }}
+                  />
                   {errors.jobRoleName && <p className="text-xs text-red-500 font-bold">{errors.jobRoleName.message}</p>}
                 </div>
 
@@ -819,106 +729,17 @@ export default function CreateJobPage() {
                   {errors.headcountRequired && <p className="text-xs text-red-500 font-bold">{errors.headcountRequired.message}</p>}
                 </div>
 
-                {/* Function / Department Searchable Multi-Select Dropdown */}
-                <div className="space-y-2 relative">
+                {/* Function / Department multi-select */}
+                <div className="space-y-2">
                   <Label className="text-slate-700 font-extrabold text-xs">Department / Function</Label>
-
-                  {/* Selected Department Badges */}
-                  {selectedFunctionIds.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 p-2 bg-indigo-50/50 border border-indigo-100 rounded-xl mb-1">
-                      {selectedFunctionIds.map((id) => {
-                        const funcItem = functions.find((f: any) => String(f.id) === id);
-                        const name = funcItem && 'name' in funcItem ? funcItem.name : id;
-                        return (
-                          <Badge
-                            key={id}
-                            className="bg-indigo-100 hover:bg-indigo-200 text-indigo-700 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-xs"
-                          >
-                            {name}
-                            <button
-                              type="button"
-                              onClick={() => toggleId('functionIds', id)}
-                              className="hover:bg-indigo-300/50 rounded-full p-0.5"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div className="relative">
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      placeholder="Type or search department/function..."
-                      className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 px-3.5 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                      value={functionSearch}
-                      onChange={(e) => {
-                        setFunctionSearch(e.target.value);
-                        setIsFunctionOpen(true);
-                      }}
-                      onFocus={() => setIsFunctionOpen(true)}
-                      onBlur={() => setTimeout(() => setIsFunctionOpen(false), 250)}
-                    />
-                    <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                  </div>
-                  {isFunctionOpen && (
-                    <div className="absolute left-0 right-0 top-[100%] mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                      {functions
-                        .filter((func: any) => !functionSearch || (func.name || '').toLowerCase().includes(functionSearch.toLowerCase()))
-                        .map((func: any) => {
-                          const id = String(func.id);
-                          const isSelected = selectedFunctionIds.includes(id);
-                          return (
-                            <button
-                              key={id}
-                              type="button"
-                              className={cn(
-                                "w-full text-left px-3.5 py-2 text-xs font-semibold flex items-center justify-between transition-colors",
-                                isSelected ? "bg-indigo-50 text-indigo-700 font-bold" : "text-slate-700 hover:bg-slate-50"
-                              )}
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                toggleId('functionIds', id);
-                                setIsFunctionOpen(false);
-                              }}
-                              onClick={() => {
-                                toggleId('functionIds', id);
-                                setIsFunctionOpen(false);
-                              }}
-                            >
-                              <span>{'name' in func ? func.name : id}</span>
-                              {isSelected && <span className="text-indigo-600 font-bold">✓</span>}
-                            </button>
-                          );
-                        })}
-                      {functionSearch.trim() !== '' && !functions.some((func: any) => (func.name || '').toLowerCase() === functionSearch.trim().toLowerCase()) && !selectedFunctionIds.includes(functionSearch.trim()) && (
-                        <button
-                          type="button"
-                          className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleId('functionIds', functionSearch.trim());
-                            setFunctionSearch('');
-                            setIsFunctionOpen(false);
-                          }}
-                          onClick={() => {
-                            toggleId('functionIds', functionSearch.trim());
-                            setFunctionSearch('');
-                            setIsFunctionOpen(false);
-                          }}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                            Add &quot;{functionSearch.trim()}&quot;
-                          </span>
-                          <Badge className="bg-indigo-100 text-indigo-700 text-[10px] font-bold border-none">Custom</Badge>
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  <MultiSelectCombobox
+                    options={functionOptions}
+                    value={selectedFunctionIds}
+                    onChange={setFunctions}
+                    placeholder="Type or search department/function..."
+                    accent="indigo"
+                    loading={functionsQuery.isLoading}
+                  />
                 </div>
 
                 {/* Working Days */}
@@ -960,7 +781,7 @@ export default function CreateJobPage() {
                 </div>
               </div>
 
-              {/* 7. Required Experience */}
+              {/* Required Experience (years + months) */}
               <div className="space-y-3 border-t border-slate-50 pt-3">
                 <Label className="text-slate-700 font-extrabold text-xs">Experience Requirement *</Label>
 
@@ -973,7 +794,9 @@ export default function CreateJobPage() {
                       setValue('freshersOnly', isChecked, { shouldValidate: true });
                       if (isChecked) {
                         setValue('minExperienceYears', 0);
-                        setValue('maxExperienceYears', 0);
+                        setValue('minExperienceMonths', 0);
+                        setValue('maxExperienceYears', undefined);
+                        setValue('maxExperienceMonths', undefined);
                       }
                     }}
                   />
@@ -985,13 +808,36 @@ export default function CreateJobPage() {
                 {!formData.freshersOnly && (
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
-                      <Label htmlFor="minExperienceYears" className="text-slate-500 font-bold text-xs">Minimum Experience (Years)</Label>
-                      <Input id="minExperienceYears" type="number" min={0} {...register('minExperienceYears')} className="rounded-xl border-slate-200" />
-                      {errors.minExperienceYears && <p className="text-xs text-red-500 font-bold">{errors.minExperienceYears.message}</p>}
+                      <Label className="text-slate-500 font-bold text-xs">Minimum Experience</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="relative">
+                          <Input id="minExperienceYears" type="number" min={0} max={60} inputMode="numeric" aria-label="Minimum experience years" {...register('minExperienceYears')} className="rounded-xl border-slate-200 pr-12" />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400">yrs</span>
+                        </div>
+                        <div className="relative">
+                          <Input id="minExperienceMonths" type="number" min={0} max={11} inputMode="numeric" aria-label="Minimum experience months" {...register('minExperienceMonths')} className="rounded-xl border-slate-200 pr-12" />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400">mo</span>
+                        </div>
+                      </div>
+                      {(errors.minExperienceYears || errors.minExperienceMonths) && (
+                        <p className="text-xs text-red-500 font-bold">{errors.minExperienceYears?.message || errors.minExperienceMonths?.message}</p>
+                      )}
                     </div>
                     <div className="space-y-1.5">
-                      <Label htmlFor="maxExperienceYears" className="text-slate-500 font-bold text-xs">Maximum Experience (Years)</Label>
-                      <Input id="maxExperienceYears" type="number" min={0} placeholder="e.g. 5" {...register('maxExperienceYears')} className="rounded-xl border-slate-200" />
+                      <Label className="text-slate-500 font-bold text-xs">Maximum Experience (optional)</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="relative">
+                          <Input id="maxExperienceYears" type="number" min={0} max={60} inputMode="numeric" placeholder="e.g. 5" aria-label="Maximum experience years" {...register('maxExperienceYears')} className="rounded-xl border-slate-200 pr-12" />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400">yrs</span>
+                        </div>
+                        <div className="relative">
+                          <Input id="maxExperienceMonths" type="number" min={0} max={11} inputMode="numeric" placeholder="e.g. 6" aria-label="Maximum experience months" {...register('maxExperienceMonths')} className="rounded-xl border-slate-200 pr-12" />
+                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-bold text-slate-400">mo</span>
+                        </div>
+                      </div>
+                      {(errors.maxExperienceYears || errors.maxExperienceMonths) && (
+                        <p className="text-xs text-red-500 font-bold">{errors.maxExperienceYears?.message || errors.maxExperienceMonths?.message}</p>
+                      )}
                     </div>
                   </div>
                 )}
@@ -999,114 +845,24 @@ export default function CreateJobPage() {
             </Card>
 
             {/* Card 2: Location & Industry */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <MapPin className="h-5 w-5" />
                 <span>2. Location & Industry</span>
               </div>
               <div className="space-y-4">
-                {/* Industry Multi-Select Dropdown */}
-                <div className="space-y-2 max-w-md relative">
+                {/* Industry multi-select */}
+                <div className="space-y-2 max-w-md">
                   <Label className="text-slate-700 font-extrabold text-xs">Industry *</Label>
-
-                  {/* Selected Industry Badges */}
-                  {selectedIndustryIds.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 p-2 bg-blue-50/50 border border-blue-100 rounded-xl mb-1">
-                      {selectedIndustryIds.map((id) => {
-                        const indItem = industries.find((ind: any) => String(ind.id) === id);
-                        const name = indItem && 'name' in indItem ? indItem.name : id;
-                        return (
-                          <Badge
-                            key={id}
-                            className="bg-blue-100 hover:bg-blue-200 text-blue-800 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-xs"
-                          >
-                            {name}
-                            <button
-                              type="button"
-                              onClick={() => toggleId('industryIds', id)}
-                              className="hover:bg-blue-300/50 rounded-full p-0.5"
-                            >
-                              <X className="h-3 w-3" />
-                            </button>
-                          </Badge>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  <div className="relative">
-                    <input
-                      type="text"
-                      autoComplete="off"
-                      placeholder="Type to search industry..."
-                      className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 px-3.5 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                      value={industrySearch}
-                      onChange={(e) => {
-                        setIndustrySearch(e.target.value);
-                        setIsIndustryOpen(true);
-                      }}
-                      onFocus={() => setIsIndustryOpen(true)}
-                      onBlur={() => setTimeout(() => setIsIndustryOpen(false), 250)}
-                    />
-                    <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                  </div>
-                  {isIndustryOpen && (
-                    <div className="absolute left-0 right-0 top-[100%] mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                      {industries
-                        .filter((ind: any) => !industrySearch || (ind.name || '').toLowerCase().includes(industrySearch.toLowerCase()))
-                        .map((ind: any) => {
-                          const id = String(ind.id);
-                          const isSelected = selectedIndustryIds.includes(id);
-                          return (
-                            <button
-                              key={id}
-                              type="button"
-                              className={cn(
-                                "w-full text-left px-3.5 py-2 text-xs font-semibold flex items-center justify-between transition-colors",
-                                isSelected ? "bg-blue-50 text-blue-700 font-bold" : "text-slate-700 hover:bg-slate-50"
-                              )}
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                toggleId('industryIds', id);
-                                setIsIndustryOpen(false);
-                              }}
-                              onClick={() => {
-                                toggleId('industryIds', id);
-                                setIsIndustryOpen(false);
-                              }}
-                            >
-                              <span>{'name' in ind ? ind.name : id}</span>
-                              {isSelected && <span className="text-blue-600 font-bold">✓</span>}
-                            </button>
-                          );
-                        })}
-                      {industrySearch.trim() !== '' && !industries.some((ind: any) => (ind.name || '').toLowerCase() === industrySearch.trim().toLowerCase()) && !selectedIndustryIds.includes(industrySearch.trim()) && (
-                        <button
-                          type="button"
-                          className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-blue-600 bg-blue-50/60 hover:bg-blue-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleId('industryIds', industrySearch.trim());
-                            setIndustrySearch('');
-                            setIsIndustryOpen(false);
-                          }}
-                          onClick={() => {
-                            toggleId('industryIds', industrySearch.trim());
-                            setIndustrySearch('');
-                            setIsIndustryOpen(false);
-                          }}
-                        >
-                          <span className="flex items-center gap-1.5">
-                            <Plus className="h-3.5 w-3.5 text-blue-600" />
-                            Add &quot;{industrySearch.trim()}&quot;
-                          </span>
-                          <Badge className="bg-blue-100 text-blue-700 text-[10px] font-bold border-none">Custom</Badge>
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  <MultiSelectCombobox
+                    options={industryOptions}
+                    value={selectedIndustryIds}
+                    onChange={setIndustries}
+                    placeholder="Type to search industry..."
+                    accent="blue"
+                    loading={industriesQuery.isLoading}
+                  />
                   {errors.industryIds && <p className="text-xs text-red-500 font-bold">{errors.industryIds.message}</p>}
-                  {errors.industryId && <p className="text-xs text-red-500 font-bold">{errors.industryId.message}</p>}
                 </div>
 
                 <Separator className="my-2 bg-slate-50" />
@@ -1116,252 +872,69 @@ export default function CreateJobPage() {
                   <Label className="text-slate-700 font-extrabold text-xs">Location *</Label>
                   <div className="grid gap-4 sm:grid-cols-3">
                     {/* State */}
-                    <div className="space-y-1.5 relative">
+                    <div className="space-y-1.5">
                       <Label className="text-[10px] text-slate-400 font-bold uppercase">State</Label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          autoComplete="off"
-                          placeholder="Type or select state..."
-                          className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 px-3.5 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                          value={stateInput}
-                          onChange={(e) => {
-                            setStateInput(e.target.value);
-                            setIsStateOpen(true);
-                          }}
-                          onFocus={() => setIsStateOpen(true)}
-                          onBlur={() => {
-                            setTimeout(() => {
-                              setIsStateOpen(false);
-                              const matched = states.find((s: string) => s.toLowerCase() === stateInput.trim().toLowerCase());
-                              if (matched) {
-                                handleStateChange(matched);
-                              } else if (selectedState) {
-                                setStateInput(selectedState);
-                              }
-                            }, 200);
-                          }}
-                        />
-                        <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                      </div>
-                      {isStateOpen && (
-                        <div className="absolute left-0 right-0 top-[66px] z-50 max-h-[200px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                          {isLoadingStates ? (
-                            <div className="flex items-center justify-center p-2.5">
-                              <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                            </div>
-                          ) : (
-                            <>
-                              {filteredStates.map((state: string) => (
-                                <button
-                                  key={state}
-                                  type="button"
-                                  className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleStateChange(state);
-                                    setIsStateOpen(false);
-                                  }}
-                                  onClick={() => {
-                                    handleStateChange(state);
-                                    setIsStateOpen(false);
-                                  }}
-                                >
-                                  {state}
-                                </button>
-                              ))}
-                              {stateInput.trim() !== '' && !states.some((s: string) => s.toLowerCase() === stateInput.trim().toLowerCase()) && (
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-blue-600 bg-blue-50/60 hover:bg-blue-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleStateChange(stateInput.trim());
-                                    setIsStateOpen(false);
-                                  }}
-                                  onClick={() => {
-                                    handleStateChange(stateInput.trim());
-                                    setIsStateOpen(false);
-                                  }}
-                                >
-                                  <span className="flex items-center gap-1.5">
-                                    <Plus className="h-3.5 w-3.5 text-blue-600" />
-                                    Add &quot;{stateInput.trim()}&quot;
-                                  </span>
-                                  <Badge className="bg-blue-100 text-blue-700 text-[10px] font-bold border-none">Custom</Badge>
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
+                      <SuggestInput
+                        options={stateOptions}
+                        value={stateInput}
+                        selectedLabel={selectedState}
+                        loading={isLoadingStates}
+                        placeholder="Type or select state..."
+                        onValueChange={setStateInput}
+                        onSelect={(option) => handleStateChange(option.value)}
+                        onCustom={(text) => handleStateChange(text.trim())}
+                        onBlurCommit={() => {
+                          const matched = states.find((s: string) => s.toLowerCase() === stateInput.trim().toLowerCase());
+                          if (matched) handleStateChange(matched);
+                          else if (selectedState) setStateInput(selectedState);
+                        }}
+                      />
                     </div>
 
                     {/* City */}
-                    <div className="space-y-1.5 relative">
+                    <div className="space-y-1.5">
                       <Label className="text-[10px] text-slate-400 font-bold uppercase">City</Label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          autoComplete="off"
-                          placeholder={selectedState ? "Type or select city..." : "Choose state first"}
-                          disabled={!selectedState}
-                          className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 px-3.5 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm disabled:opacity-50 disabled:bg-slate-100/50"
-                          value={cityInput}
-                          onChange={(e) => {
-                            setCityInput(e.target.value);
-                            setIsCityOpen(true);
-                          }}
-                          onFocus={() => setIsCityOpen(true)}
-                          onBlur={() => {
-                            setTimeout(() => {
-                              setIsCityOpen(false);
-                              const matched = cities.find((c: string) => c.toLowerCase() === cityInput.trim().toLowerCase());
-                              if (matched) {
-                                handleCityChange(matched);
-                              } else if (selectedCity) {
-                                setCityInput(selectedCity);
-                              }
-                            }, 200);
-                          }}
-                        />
-                        <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                      </div>
-                      {isCityOpen && (selectedState || stateInput.trim()) && (
-                        <div className="absolute left-0 right-0 top-[66px] z-50 max-h-[200px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                          {isLoadingCities ? (
-                            <div className="flex items-center justify-center p-2.5">
-                              <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                            </div>
-                          ) : (
-                            <>
-                              {filteredCities.map((city: string) => (
-                                <button
-                                  key={city}
-                                  type="button"
-                                  className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleCityChange(city);
-                                    setIsCityOpen(false);
-                                  }}
-                                  onClick={() => {
-                                    handleCityChange(city);
-                                    setIsCityOpen(false);
-                                  }}
-                                >
-                                  {city}
-                                </button>
-                              ))}
-                              {cityInput.trim() !== '' && !cities.some((c: string) => c.toLowerCase() === cityInput.trim().toLowerCase()) && (
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-blue-600 bg-blue-50/60 hover:bg-blue-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleCityChange(cityInput.trim());
-                                    setIsCityOpen(false);
-                                  }}
-                                  onClick={() => {
-                                    handleCityChange(cityInput.trim());
-                                    setIsCityOpen(false);
-                                  }}
-                                >
-                                  <span className="flex items-center gap-1.5">
-                                    <Plus className="h-3.5 w-3.5 text-blue-600" />
-                                    Add &quot;{cityInput.trim()}&quot;
-                                  </span>
-                                  <Badge className="bg-blue-100 text-blue-700 text-[10px] font-bold border-none">Custom</Badge>
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
+                      <SuggestInput
+                        options={cityOptions}
+                        value={cityInput}
+                        selectedLabel={selectedCity}
+                        loading={isLoadingCities}
+                        disabled={!selectedState}
+                        placeholder={selectedState ? 'Type or select city...' : 'Choose state first'}
+                        onValueChange={setCityInput}
+                        onSelect={(option) => handleCityChange(option.value)}
+                        onCustom={(text) => handleCityChange(text.trim())}
+                        onBlurCommit={() => {
+                          const matched = cities.find((c: string) => c.toLowerCase() === cityInput.trim().toLowerCase());
+                          if (matched) handleCityChange(matched);
+                          else if (selectedCity) setCityInput(selectedCity);
+                        }}
+                      />
                     </div>
 
                     {/* Locality */}
-                    <div className="space-y-1.5 relative">
+                    <div className="space-y-1.5">
                       <Label className="text-[10px] text-slate-400 font-bold uppercase">Locality</Label>
-                      <div className="relative">
-                        <input
-                          type="text"
-                          autoComplete="off"
-                          placeholder={selectedCity ? "Type or select locality..." : "Choose city first"}
-                          disabled={!selectedCity}
-                          className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 px-3.5 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm disabled:opacity-50 disabled:bg-slate-100/50"
-                          value={localityInput}
-                          onChange={(e) => {
-                            setLocalityInput(e.target.value);
-                            setIsLocalityOpen(true);
-                          }}
-                          onFocus={() => setIsLocalityOpen(true)}
-                          onBlur={() => {
-                            setTimeout(() => {
-                              setIsLocalityOpen(false);
-                              const matched = localities.find((l: BackendLocation) => l.locality.toLowerCase() === localityInput.trim().toLowerCase());
-                              if (matched) {
-                                handleLocalityChange(String(matched.id));
-                              } else if (selectedLocalityId) {
-                                const activeLoc = localities.find((l: BackendLocation) => String(l.id) === selectedLocalityId);
-                                setLocalityInput(activeLoc ? activeLoc.locality : '');
-                              }
-                            }, 200);
-                          }}
-                        />
-                        <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                      </div>
-                      {isLocalityOpen && (selectedCity || cityInput.trim()) && (
-                        <div className="absolute left-0 right-0 top-[66px] z-50 max-h-[200px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                          {isLoadingLocalities ? (
-                            <div className="flex items-center justify-center p-2.5">
-                              <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
-                            </div>
-                          ) : (
-                            <>
-                              {filteredLocalities.map((loc: BackendLocation) => (
-                                <button
-                                  key={loc.id}
-                                  type="button"
-                                  className="w-full text-left px-3.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleLocalityChange(String(loc.id));
-                                    setIsLocalityOpen(false);
-                                  }}
-                                  onClick={() => {
-                                    handleLocalityChange(String(loc.id));
-                                    setIsLocalityOpen(false);
-                                  }}
-                                >
-                                  {loc.locality}
-                                </button>
-                              ))}
-                              {localityInput.trim() !== '' && !localities.some((l: BackendLocation) => l.locality.toLowerCase() === localityInput.trim().toLowerCase()) && (
-                                <button
-                                  type="button"
-                                  className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-blue-600 bg-blue-50/60 hover:bg-blue-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleCustomLocality(localityInput.trim());
-                                    setIsLocalityOpen(false);
-                                  }}
-                                  onClick={() => {
-                                    handleCustomLocality(localityInput.trim());
-                                    setIsLocalityOpen(false);
-                                  }}
-                                >
-                                  <span className="flex items-center gap-1.5">
-                                    <Plus className="h-3.5 w-3.5 text-blue-600" />
-                                    Add &quot;{localityInput.trim()}&quot;
-                                  </span>
-                                  <Badge className="bg-blue-100 text-blue-700 text-[10px] font-bold border-none">Custom</Badge>
-                                </button>
-                              )}
-                            </>
-                          )}
-                        </div>
-                      )}
+                      <SuggestInput
+                        options={localityOptions}
+                        value={localityInput}
+                        selectedLabel={localities.find((l: BackendLocation) => String(l.id) === selectedLocalityId)?.locality}
+                        loading={isLoadingLocalities}
+                        disabled={!selectedCity}
+                        placeholder={selectedCity ? 'Type or select locality...' : 'Choose city first'}
+                        onValueChange={setLocalityInput}
+                        onSelect={(option) => handleLocalityChange(option.value)}
+                        onCustom={(text) => handleCustomLocality(text.trim())}
+                        onBlurCommit={() => {
+                          const matched = localities.find((l: BackendLocation) => l.locality.toLowerCase() === localityInput.trim().toLowerCase());
+                          if (matched) {
+                            handleLocalityChange(String(matched.id));
+                          } else if (selectedLocalityId) {
+                            const activeLoc = localities.find((l: BackendLocation) => String(l.id) === selectedLocalityId);
+                            setLocalityInput(activeLoc ? activeLoc.locality : '');
+                          }
+                        }}
+                      />
                     </div>
                   </div>
                   {errors.locationId && <p className="text-xs text-red-500 font-bold mt-1">{errors.locationId.message}</p>}
@@ -1370,381 +943,85 @@ export default function CreateJobPage() {
             </Card>
 
             {/* Card 3: Skills & Qualifications */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <Code className="h-5 w-5" />
                 <span>3. Skills & Qualifications</span>
               </div>
-              <div className="space-y-3 relative">
+
+              <div className="space-y-3">
                 <Label className="text-slate-700 font-extrabold text-xs">Required Skills</Label>
-
-                {/* Render Selected Skills as dismissible badges */}
-                {selectedSkillIds.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50/50 border border-slate-100 rounded-xl">
-                    {selectedSkillIds.map((id) => {
-                      const skill = skills.find((s) => String(s.id) === id);
-                      const name = skill && 'name' in skill ? skill.name : id;
-                      return (
-                        <Badge
-                          key={id}
-                          className="bg-indigo-50 hover:bg-indigo-100/80 text-indigo-600 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-sm"
-                        >
-                          {name}
-                          <button
-                            type="button"
-                            onClick={() => toggleId('skillIds', id)}
-                            className="hover:bg-indigo-200/50 rounded-full p-0.5"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Search Input Box */}
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="Type to search and select skills..."
-                    value={skillSearch}
-                    onChange={(e) => {
-                      setSkillSearch(e.target.value);
-                      setIsSkillOpen(true);
-                    }}
-                    onFocus={() => setIsSkillOpen(true)}
-                    onBlur={() => setTimeout(() => setIsSkillOpen(false), 250)}
-                    className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 pl-10 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                  />
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                </div>
-
-                {/* Skills Multi-Select Dropdown Menu */}
-                {isSkillOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                    {skillSuggestions.map((skill: any) => {
-                      const id = String(skill.id);
-                      const isSelected = selectedSkillIds.includes(id);
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={cn(
-                            'w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center justify-between transition-colors',
-                            isSelected ? 'bg-indigo-50/60 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
-                          )}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleId('skillIds', id);
-                            setIsSkillOpen(false);
-                          }}
-                          onClick={() => {
-                            toggleId('skillIds', id);
-                            setIsSkillOpen(false);
-                          }}
-                        >
-                          <span>{'name' in skill ? skill.name : id}</span>
-                          <div className={cn(
-                            'h-4 w-4 rounded border flex items-center justify-center transition-all',
-                            isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
-                          )}>
-                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {skillSearch.trim() !== '' && !skills.some((skill: any) => (skill.name || '').toLowerCase() === skillSearch.trim().toLowerCase()) && !selectedSkillIds.includes(skillSearch.trim()) && (
-                      <button
-                        type="button"
-                        className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          toggleId('skillIds', skillSearch.trim());
-                          setSkillSearch('');
-                          setIsSkillOpen(false);
-                        }}
-                        onClick={() => {
-                          toggleId('skillIds', skillSearch.trim());
-                          setSkillSearch('');
-                          setIsSkillOpen(false);
-                        }}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                          Add &quot;{skillSearch.trim()}&quot;
-                        </span>
-                        <Badge className="bg-indigo-100 text-indigo-700 text-[10px] font-bold border-none">Custom</Badge>
-                      </button>
-                    )}
-                  </div>
-                )}
+                <MultiSelectCombobox
+                  options={skillOptions}
+                  value={selectedSkillIds}
+                  onChange={(next) => setIdList('skillIds', next)}
+                  placeholder="Type to search and select skills..."
+                  showSearchIcon
+                  loading={skillsQuery.isLoading}
+                />
               </div>
-              <Separator className="my-2 bg-slate-50" />
-              <div className="space-y-3 relative">
-                <Label className="text-slate-700 font-extrabold text-xs">Qualifications Required</Label>
 
-                {/* Render Selected Qualifications as dismissible badges */}
-                {selectedQualificationIds.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50/50 border border-slate-100 rounded-xl">
-                    {selectedQualificationIds.map((id) => {
-                      const qualification = qualifications.find((q) => String(q.id) === id);
-                      const name = qualification && 'name' in qualification ? qualification.name : id;
-                      return (
-                        <Badge
-                          key={id}
-                          className="bg-indigo-50 hover:bg-indigo-100/80 text-indigo-600 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-sm"
-                        >
-                          {name}
-                          <button
-                            type="button"
-                            onClick={() => toggleId('qualificationIds', id)}
-                            className="hover:bg-indigo-200/50 rounded-full p-0.5"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )}
+              <Separator className="my-2 bg-slate-50" />
+
+              <div className="space-y-3">
+                <Label className="text-slate-700 font-extrabold text-xs">Qualifications Required</Label>
 
                 {/* Candidate-side Qualification Level Filter Buttons */}
                 <div className="space-y-1.5">
                   <Label className="text-[10px] text-slate-400 font-bold uppercase block">Filter by Level</Label>
                   <div className="flex flex-wrap gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedQualLevel('ALL')}
-                      className={cn(
-                        'px-2.5 py-1 rounded-lg text-xs font-bold transition-all border',
-                        selectedQualLevel === 'ALL'
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
-                          : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                      )}
-                    >
-                      All Levels
-                    </button>
-                    {QUAL_CATEGORY_ORDER.map((catKey) => (
+                    {['ALL', ...QUAL_CATEGORY_ORDER].map((key) => (
                       <button
-                        key={catKey}
+                        key={key}
                         type="button"
-                        onClick={() => setSelectedQualLevel(catKey)}
+                        onClick={() => setSelectedQualLevel(key)}
                         className={cn(
                           'px-2.5 py-1 rounded-lg text-xs font-bold transition-all border',
-                          selectedQualLevel === catKey
+                          selectedQualLevel === key
                             ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
                             : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
                         )}
                       >
-                        {QUAL_CATEGORY_LABELS[catKey] || catKey}
+                        {key === 'ALL' ? 'All Levels' : QUAL_CATEGORY_LABELS[key] || key}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {/* Search Input Box */}
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder={`Search ${selectedQualLevel !== 'ALL' ? QUAL_CATEGORY_LABELS[selectedQualLevel] || selectedQualLevel : 'qualifications'}...`}
-                    value={qualSearch}
-                    onChange={(e) => {
-                      setQualSearch(e.target.value);
-                      setIsQualOpen(true);
-                    }}
-                    onFocus={() => setIsQualOpen(true)}
-                    onBlur={() => setTimeout(() => setIsQualOpen(false), 250)}
-                    className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 pl-10 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                  />
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                </div>
-
-                {/* Qualifications Multi-Select Dropdown Menu */}
-                {isQualOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                    {qualSuggestions.map((qualification: any) => {
-                      const id = String(qualification.id);
-                      const isSelected = selectedQualificationIds.includes(id);
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={cn(
-                            'w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center justify-between transition-colors',
-                            isSelected ? 'bg-indigo-50/60 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
-                          )}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleId('qualificationIds', id);
-                            setIsQualOpen(false);
-                          }}
-                          onClick={() => {
-                            toggleId('qualificationIds', id);
-                            setIsQualOpen(false);
-                          }}
-                        >
-                          <span>{'name' in qualification ? qualification.name : id}</span>
-                          <div className={cn(
-                            'h-4 w-4 rounded border flex items-center justify-center transition-all',
-                            isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
-                          )}>
-                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {qualSearch.trim() !== '' && !qualifications.some((q: any) => (q.name || '').toLowerCase() === qualSearch.trim().toLowerCase()) && !selectedQualificationIds.includes(qualSearch.trim()) && (
-                      <button
-                        type="button"
-                        className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          toggleId('qualificationIds', qualSearch.trim());
-                          setQualSearch('');
-                          setIsQualOpen(false);
-                        }}
-                        onClick={() => {
-                          toggleId('qualificationIds', qualSearch.trim());
-                          setQualSearch('');
-                          setIsQualOpen(false);
-                        }}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                          Add &quot;{qualSearch.trim()}&quot;
-                        </span>
-                        <Badge className="bg-indigo-100 text-indigo-700 text-[10px] font-bold border-none">Custom</Badge>
-                      </button>
-                    )}
-                  </div>
-                )}
+                <MultiSelectCombobox
+                  options={qualOptions}
+                  value={selectedQualificationIds}
+                  onChange={(next) => setIdList('qualificationIds', next)}
+                  placeholder={`Search ${selectedQualLevel !== 'ALL' ? QUAL_CATEGORY_LABELS[selectedQualLevel] || selectedQualLevel : 'qualifications'}...`}
+                  showSearchIcon
+                  allowCustom={false}
+                  requireQuery={selectedQualLevel === 'ALL'}
+                  loading={qualificationsQuery.isLoading}
+                />
               </div>
 
               <Separator className="my-2 bg-slate-50" />
 
-              {/* Required Languages Section */}
-              <div className="space-y-3 relative">
+              <div className="space-y-3">
                 <Label className="text-slate-700 font-extrabold text-xs">Required Languages</Label>
-
-                {/* Selected Languages dismissible badges */}
-                {selectedLanguageIds.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50/50 border border-slate-100 rounded-xl">
-                    {selectedLanguageIds.map((id) => {
-                      const lang = languages.find((l) => String(l.id) === id);
-                      const name = lang && 'name' in lang ? lang.name : id;
-                      return (
-                        <Badge
-                          key={id}
-                          className="bg-indigo-50 hover:bg-indigo-100/80 text-indigo-600 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-sm"
-                        >
-                          {name}
-                          <button
-                            type="button"
-                            onClick={() => toggleId('languageIds', id)}
-                            className="hover:bg-indigo-200/50 rounded-full p-0.5"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </Badge>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Search Input Box */}
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="Search and add required languages (English, Hindi, Tamil, etc.)..."
-                    value={langSearch}
-                    onChange={(e) => {
-                      setLangSearch(e.target.value);
-                      setIsLangOpen(true);
-                    }}
-                    onFocus={() => setIsLangOpen(true)}
-                    onBlur={() => setTimeout(() => setIsLangOpen(false), 250)}
-                    className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 pl-10 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                  />
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                </div>
-
-                {/* Languages Multi-Select Dropdown Menu */}
-                {isLangOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                    {langSuggestions.map((lang: any) => {
-                      const id = String(lang.id);
-                      const isSelected = selectedLanguageIds.includes(id);
-                      return (
-                        <button
-                          key={id}
-                          type="button"
-                          className={cn(
-                            'w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center justify-between transition-colors',
-                            isSelected ? 'bg-indigo-50/60 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
-                          )}
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleId('languageIds', id);
-                            setIsLangOpen(false);
-                          }}
-                          onClick={() => {
-                            toggleId('languageIds', id);
-                            setIsLangOpen(false);
-                          }}
-                        >
-                          <span>{'name' in lang ? lang.name : id}</span>
-                          <div className={cn(
-                            'h-4 w-4 rounded border flex items-center justify-center transition-all',
-                            isSelected ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
-                          )}>
-                            {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                          </div>
-                        </button>
-                      );
-                    })}
-                    {langSearch.trim() !== '' && !languages.some((l: any) => (l.name || '').toLowerCase() === langSearch.trim().toLowerCase()) && !selectedLanguageIds.includes(langSearch.trim()) && (
-                      <button
-                        type="button"
-                        className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          toggleId('languageIds', langSearch.trim());
-                          setLangSearch('');
-                          setIsLangOpen(false);
-                        }}
-                        onClick={() => {
-                          toggleId('languageIds', langSearch.trim());
-                          setLangSearch('');
-                          setIsLangOpen(false);
-                        }}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                          Add &quot;{langSearch.trim()}&quot;
-                        </span>
-                        <Badge className="bg-indigo-100 text-indigo-700 text-[10px] font-bold border-none">Custom</Badge>
-                      </button>
-                    )}
-                  </div>
-                )}
+                <MultiSelectCombobox
+                  options={languageOptions}
+                  value={selectedLanguageIds}
+                  onChange={(next) => setIdList('languageIds', next)}
+                  placeholder="Search and add required languages (English, Hindi, Tamil, etc.)..."
+                  showSearchIcon
+                  loading={languagesQuery.isLoading}
+                />
               </div>
             </Card>
 
             {/* Card 4: Salary & Shift */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <IndianRupee className="h-5 w-5" />
                 <span>4. Salary, Shifts & Types</span>
               </div>
 
-              {/* Salary Period Select */}
               <div className="space-y-2 max-w-xs">
                 <Label className="text-slate-700 font-extrabold text-xs">Salary Type *</Label>
                 <Select value={formData.wageType || 'monthly'} onValueChange={(val: 'monthly' | 'annual' | 'daily') => setValue('wageType', val, { shouldValidate: true })}>
@@ -1760,14 +1037,14 @@ export default function CreateJobPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="wageMin" className="text-slate-700 font-extrabold text-xs">
-                    Minimum Wage (₹) ({formData.wageType === 'daily' ? 'Per Day' : formData.wageType === 'annual' ? 'Per Annum' : 'Per Month'}) *
+                    Minimum Wage (₹) ({wageLabel}) *
                   </Label>
                   <Input id="wageMin" type="number" placeholder="25000" {...register('wageMin')} className="rounded-xl border-slate-200" />
                   {errors.wageMin && <p className="text-xs text-red-500 font-bold">{errors.wageMin.message}</p>}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="wageMax" className="text-slate-700 font-extrabold text-xs">
-                    Maximum Wage (₹) ({formData.wageType === 'daily' ? 'Per Day' : formData.wageType === 'annual' ? 'Per Annum' : 'Per Month'}) *
+                    Maximum Wage (₹) ({wageLabel}) *
                   </Label>
                   <Input id="wageMax" type="number" placeholder="40000" {...register('wageMax')} className="rounded-xl border-slate-200" />
                   {errors.wageMax && <p className="text-xs text-red-500 font-bold">{errors.wageMax.message}</p>}
@@ -1800,238 +1077,42 @@ export default function CreateJobPage() {
             </Card>
 
             {/* Card 5: Benefits */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <Rocket className="h-5 w-5" />
                 <span>5. Benefits Provided</span>
               </div>
-
-              <div className="space-y-3 relative">
-                {/* Render Selected Benefits as dismissible badges */}
-                {(formData.benefitNames || []).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2.5 bg-slate-50/70 border border-slate-100 rounded-xl">
-                    {(formData.benefitNames || []).map((benefit) => (
-                      <Badge
-                        key={benefit}
-                        className="bg-indigo-50 hover:bg-indigo-100/80 text-indigo-700 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-sm"
-                      >
-                        {benefit}
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleBenefit(benefit);
-                          }}
-                          className="hover:bg-indigo-200/50 rounded-full p-0.5"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-
-                {/* Search Input Box */}
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="Type to search and select benefits..."
-                    className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 pl-10 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                    value={benefitSearch}
-                    onChange={(e) => {
-                      setBenefitSearch(e.target.value);
-                      setIsBenefitOpen(true);
-                    }}
-                    onFocus={() => setIsBenefitOpen(true)}
-                    onBlur={() => setTimeout(() => setIsBenefitOpen(false), 200)}
-                  />
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                </div>
-
-                {/* Searchable Multi-Select Dropdown Menu */}
-                {isBenefitOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                    {benefitsOptionsList
-                      .filter((benefit) => !benefitSearch || benefit.toLowerCase().includes(benefitSearch.toLowerCase()))
-                      .map((benefit) => {
-                        const isChecked = (formData.benefitNames || []).includes(benefit);
-                        return (
-                          <button
-                            key={benefit}
-                            type="button"
-                            className={cn(
-                              'w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center justify-between transition-colors',
-                              isChecked ? 'bg-indigo-50/60 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
-                            )}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              toggleBenefit(benefit);
-                              setIsBenefitOpen(false);
-                            }}
-                            onClick={() => {
-                              toggleBenefit(benefit);
-                              setIsBenefitOpen(false);
-                            }}
-                          >
-                            <span>{benefit}</span>
-                            <div className={cn(
-                              'h-4 w-4 rounded border flex items-center justify-center transition-all',
-                              isChecked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
-                            )}>
-                              {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    {benefitSearch.trim() !== '' && !benefitsOptionsList.some((b) => b.toLowerCase() === benefitSearch.trim().toLowerCase()) && !(formData.benefitNames || []).includes(benefitSearch.trim()) && (
-                      <button
-                        type="button"
-                        className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          toggleBenefit(benefitSearch.trim());
-                          setBenefitSearch('');
-                          setIsBenefitOpen(false);
-                        }}
-                        onClick={() => {
-                          toggleBenefit(benefitSearch.trim());
-                          setBenefitSearch('');
-                          setIsBenefitOpen(false);
-                        }}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                          Add &quot;{benefitSearch.trim()}&quot;
-                        </span>
-                        <Badge className="bg-indigo-100 text-indigo-700 text-[10px] font-bold border-none">Custom</Badge>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              <MultiSelectCombobox
+                options={benefitOptions}
+                value={formData.benefitNames || []}
+                onChange={(next) => setValue('benefitNames', next, { shouldDirty: true, shouldTouch: true })}
+                createValue={(label) => label}
+                placeholder="Type to search and select benefits..."
+                showSearchIcon
+              />
             </Card>
 
             {/* Card 6: Required Assets / Documents */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <FileText className="h-5 w-5" />
                 <span>6. Required Assets / Documents</span>
               </div>
-
-              <div className="space-y-3 relative">
-                {/* Render Selected Assets as dismissible badges */}
-                {(formData.assetNames || []).length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 p-2.5 bg-slate-50/70 border border-slate-100 rounded-xl">
-                    {(formData.assetNames || []).map((asset) => (
-                      <Badge
-                        key={asset}
-                        className="bg-indigo-50 hover:bg-indigo-100/80 text-indigo-700 border-none font-bold text-xs py-1 px-2.5 rounded-full flex items-center gap-1.5 shadow-sm"
-                      >
-                        {asset}
-                        <button
-                          type="button"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            toggleAsset(asset);
-                          }}
-                          className="hover:bg-indigo-200/50 rounded-full p-0.5"
-                        >
-                          <X className="h-3 w-3" />
-                        </button>
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-
-                {/* Search Input Box */}
-                <div className="relative">
-                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
-                  <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="Type to search and select required assets..."
-                    className="w-full rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-700 h-10 pl-10 pr-10 focus:outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600 transition-all shadow-sm"
-                    value={assetSearch}
-                    onChange={(e) => {
-                      setAssetSearch(e.target.value);
-                      setIsAssetOpen(true);
-                    }}
-                    onFocus={() => setIsAssetOpen(true)}
-                    onBlur={() => setTimeout(() => setIsAssetOpen(false), 200)}
-                  />
-                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rotate-90 text-slate-400 pointer-events-none" />
-                </div>
-
-                {/* Searchable Multi-Select Dropdown Menu */}
-                {isAssetOpen && (
-                  <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-[220px] overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1">
-                    {assetsOptionsList
-                      .filter((asset) => !assetSearch || asset.toLowerCase().includes(assetSearch.toLowerCase()))
-                      .map((asset) => {
-                        const isChecked = (formData.assetNames || []).includes(asset);
-                        return (
-                          <button
-                            key={asset}
-                            type="button"
-                            className={cn(
-                              'w-full text-left px-3.5 py-2.5 text-xs font-semibold flex items-center justify-between transition-colors',
-                              isChecked ? 'bg-indigo-50/60 text-indigo-700 font-bold' : 'text-slate-700 hover:bg-slate-50'
-                            )}
-                            onMouseDown={(e) => {
-                              e.preventDefault();
-                              toggleAsset(asset);
-                              setIsAssetOpen(false);
-                            }}
-                            onClick={() => {
-                              toggleAsset(asset);
-                              setIsAssetOpen(false);
-                            }}
-                          >
-                            <span>{asset}</span>
-                            <div className={cn(
-                              'h-4 w-4 rounded border flex items-center justify-center transition-all',
-                              isChecked ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'
-                            )}>
-                              {isChecked && <Check className="h-3 w-3 stroke-[3]" />}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    {assetSearch.trim() !== '' && !assetsOptionsList.some((a) => a.toLowerCase() === assetSearch.trim().toLowerCase()) && !(formData.assetNames || []).includes(assetSearch.trim()) && (
-                      <button
-                        type="button"
-                        className="w-full text-left px-3.5 py-2.5 text-xs font-bold text-indigo-600 bg-indigo-50/60 hover:bg-indigo-100/70 border-t border-slate-100 flex items-center justify-between transition-colors"
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          toggleAsset(assetSearch.trim());
-                          setAssetSearch('');
-                          setIsAssetOpen(false);
-                        }}
-                        onClick={() => {
-                          toggleAsset(assetSearch.trim());
-                          setAssetSearch('');
-                          setIsAssetOpen(false);
-                        }}
-                      >
-                        <span className="flex items-center gap-1.5">
-                          <Plus className="h-3.5 w-3.5 text-indigo-600" />
-                          Add &quot;{assetSearch.trim()}&quot;
-                        </span>
-                        <Badge className="bg-indigo-100 text-indigo-700 text-[10px] font-bold border-none">Custom</Badge>
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
+              <MultiSelectCombobox
+                options={assetOptions}
+                value={formData.assetNames || []}
+                onChange={(next) => setValue('assetNames', next, { shouldDirty: true, shouldTouch: true })}
+                createValue={(label) => label}
+                placeholder="Type to search and select required assets..."
+                showSearchIcon
+              />
             </Card>
 
-            {/* Card 5: Job Detail Sections */}
-            <Card className="p-6 border border-slate-100 rounded-2xl shadow-sm text-left bg-white space-y-4">
-              <div className="flex items-center gap-2 text-indigo-600 font-extrabold text-sm border-b border-slate-50 pb-3">
+            {/* Card 7: Job Detail Sections */}
+            <Card className={CARD}>
+              <div className={SECTION_HEADER}>
                 <FileText className="h-5 w-5" />
-                <span>5. Job Description Details</span>
+                <span>7. Job Description Details</span>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="description" className="text-slate-700 font-extrabold text-xs">General Description *</Label>
@@ -2087,12 +1168,16 @@ export default function CreateJobPage() {
                       <span className="capitalize">{formData.shiftType} Shift</span>
                     </div>
                     <div className="flex items-center gap-2">
+                      <Briefcase className="h-4 w-4 text-slate-400 shrink-0" />
+                      <span>{previewExperience}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
                       <Users className="h-4 w-4 text-slate-400 shrink-0" />
                       <span>{formData.headcountRequired || 1} openings available</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="h-4 w-4 flex items-center justify-center text-[10px] font-bold bg-slate-100 rounded text-slate-500 shrink-0">₹</span>
-                      <span>Salary: {formatWage(formData.wageMin || 0, formData.wageMax || 0)}</span>
+                      <span>Salary: {formatWage(Number(formData.wageMin) || 0, Number(formData.wageMax) || 0, formData.wageType)}</span>
                     </div>
                   </div>
 

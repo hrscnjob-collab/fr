@@ -13,7 +13,7 @@ import {
   IndianRupee,
 } from 'lucide-react';
 import { Job } from '@/lib/types';
-import { formatSalary, timeAgo } from '@/lib/format';
+import { formatExperienceRange, formatSalary, timeAgo } from '@/lib/format';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -76,7 +76,7 @@ export function JobCard({ job, variant = 'default', className, hrefPrefix = '/jo
         </span>
         <span className="flex items-center gap-1">
           <Briefcase className="h-3.5 w-3.5" />
-          {job.experienceMin}-{job.experienceMax} yrs
+          {formatExperienceRange(job.minExperienceMonths ?? job.experienceMin * 12, job.maxExperienceMonths ?? (job.experienceMax ? job.experienceMax * 12 : null), job.freshersOnly)}
         </span>
         {variant === 'default' && (
           <>
